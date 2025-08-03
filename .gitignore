@@ -1,0 +1,11 @@
+*.o
+test_*
+*.out
+*.exe
+output/
+bin/
+*.so
+*.dll
+.DS_Store
+*.tmp
+
