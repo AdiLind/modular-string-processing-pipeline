@@ -3,6 +3,10 @@
 #include <string.h>
 #include <stdio.h>
 
+
+static void cleanup_partial_init(consumer_producer_t* queue, int stage);
+
+
 const char* consumer_producer_init(consumer_producer_t* queue, int capacity)
 {
     if (NULL == queue)
@@ -233,6 +237,7 @@ int consumer_producer_wait_finished(consumer_producer_t* queue)
 
     return 0; // success
     
+
 }
 
 /*** HELPER FUNCTIONS ***/
