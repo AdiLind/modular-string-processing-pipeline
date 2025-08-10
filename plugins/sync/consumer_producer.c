@@ -111,22 +111,128 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
 }
 
 const char* consumer_producer_put(consumer_producer_t* queue, const char* item) {
-    // TODO: Implement
-    return NULL;
+
+    if (NULL == queue || NULL == item) {
+        return "Queue or item pointer is NULL";
+    }
+
+    if(NULL == queue->items) {
+        return "Queue items array is not initialized";
+    }
+    
+    if (queue->count >= queue->capacity) {
+        return "Queue is full";
+    }
+
+    //wait until queue is full
+    pthread_mutex_lock(&queue->queue_mutex);
+    while (queue->count >= queue->capacity) 
+    {
+        
+        // queue is full now so we make manual reset not_full monitor before waiting
+        monitor_reset(&queue->not_full_monitor);
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        //waiting for space to become available
+        if (0 != monitor_wait(&queue->not_full_monitor)) {
+            return "Failed to wait for not_full condition";
+        }
+        
+        //reacquire mutex and check condition again
+        pthread_mutex_lock(&queue->queue_mutex);
+    }
+
+    // now we can safely add the item (we have the mutex locked and queue is not full)
+    //make a copy of the string
+    char* copy_of_item = strdup(item);
+    if (NULL == copy_of_item) {
+        pthread_mutex_unlock(&queue->queue_mutex);
+        return "Failed to copy item string";
+    }
+    
+    // add the item to the queue
+    queue->items[queue->tail] = copy_of_item;
+    queue->tail = (queue->tail + 1) % queue->capacity;
+    queue->count++;
+
+    //now we signal that queue is not empty
+    monitor_signal(&queue->not_empty_monitor);
+
+    //if the queue is not full after adding the item, we signal not_full_monitor
+    if (queue->count < queue->capacity) {
+        monitor_signal(&queue->not_full_monitor);
+    }
+
+    pthread_mutex_unlock(&queue->queue_mutex);
+    return NULL; //success 
 }
 
-char* consumer_producer_get(consumer_producer_t* queue) {
-    // TODO: Implement
-    return NULL;
+char* consumer_producer_get(consumer_producer_t* queue) 
+{
+    if (NULL == queue) {
+        return NULL;
+    }
+    if (NULL == queue->items) {
+        return NULL; // items array is not initialized
+    }
+
+    // wait until queue is not empty
+    pthread_mutex_lock(&queue->queue_mutex);
+    while (queue->count <= 0) {
+        // queue is empty now so we make manual reset not_empty monitor before waiting
+        monitor_reset(&queue->not_empty_monitor);
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        //wait for an item to become available 
+        if (0 != monitor_wait(&queue->not_empty_monitor)) {
+            return NULL;
+        }
+        
+        //reacquire mutex and check condition again
+        pthread_mutex_lock(&queue->queue_mutex);
+    }
+
+    // now we can safely get the item (we have the mutex locked and queue is not empty)
+    // get the item from the queue
+    char* item = queue->items[queue->head];
+    queue->items[queue->head] = NULL;
+    queue->head = (queue->head + 1) % queue->capacity;
+    queue->count--;
+
+    monitor_signal(&queue->not_full_monitor);
+    // if the queue is not empty after getting the item, we signal not_empty_monitor
+    if (queue->count > 0) {
+        monitor_signal(&queue->not_empty_monitor);
+    }
+
+    pthread_mutex_unlock(&queue->queue_mutex);
+    return item; //return the item (the caller responsible for freeing it - we made a copy) #TODO: check if this is the correct approach
+
 }
 
-void consumer_producer_signal_finished(consumer_producer_t* queue) {
-    // TODO: Implement
+void consumer_producer_signal_finished(consumer_producer_t* queue) 
+{
+    if (NULL == queue) {
+        return;
+    }
+
+    // signal that processing is finished
+    monitor_signal(&queue->finished_monitor);
 }
 
-int consumer_producer_wait_finished(consumer_producer_t* queue) {
-    // TODO: Implement
-    return 0;
+int consumer_producer_wait_finished(consumer_producer_t* queue)
+{
+    if (NULL == queue) {
+        return -1;
+    }
+
+    // wait for processing to be finished
+    if (0 != monitor_wait(&queue->finished_monitor)) {
+        return -1; // error waiting for finished signal
+    }
+
+    return 0; // success
+    
 }
 
 /*** HELPER FUNCTIONS ***/
