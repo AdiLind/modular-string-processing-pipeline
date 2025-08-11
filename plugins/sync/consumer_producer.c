@@ -114,6 +114,15 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
     queue->tail = 0;
 }
 
+/* 
+*   mind roadmap before implementing this function: (TODO: delete before submitting)
+    the critical section in this method are-
+    1. reading the queue state (count, capacity)
+    2. modify the queue state
+    3. adding the item to the queue
+    and we need to release the mutex while we are waiting and the operation should be atomic
+*/
+
 const char* consumer_producer_put(consumer_producer_t* queue, const char* item) {
 
     if (NULL == queue || NULL == item) {
@@ -124,25 +133,25 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
         return "Queue items array is not initialized";
     }
     
-    if (queue->count >= queue->capacity) {
-        return "Queue is full";
-    }
+    // if (queue->count >= queue->capacity) {
+    //     return "Queue is full";
+    // }
 
     //wait until queue is full
     pthread_mutex_lock(&queue->queue_mutex);
     while (queue->count >= queue->capacity) 
     {
-        
         // queue is full now so we make manual reset not_full monitor before waiting
-        monitor_reset(&queue->not_full_monitor);
         pthread_mutex_unlock(&queue->queue_mutex);
+        monitor_reset(&queue->not_full_monitor);
         
-        //waiting for space to become available
+        
+        //block until space to becomes available
         if (0 != monitor_wait(&queue->not_full_monitor)) {
             return "Failed to wait for not_full condition";
         }
         
-        //reacquire mutex and check condition again
+        //reacquire mutex before checking condition again
         pthread_mutex_lock(&queue->queue_mutex);
     }
 
@@ -184,8 +193,8 @@ char* consumer_producer_get(consumer_producer_t* queue)
     pthread_mutex_lock(&queue->queue_mutex);
     while (queue->count <= 0) {
         // queue is empty now so we make manual reset not_empty monitor before waiting
-        monitor_reset(&queue->not_empty_monitor);
         pthread_mutex_unlock(&queue->queue_mutex);
+        monitor_reset(&queue->not_empty_monitor);
         
         //wait for an item to become available 
         if (0 != monitor_wait(&queue->not_empty_monitor)) {
@@ -214,30 +223,30 @@ char* consumer_producer_get(consumer_producer_t* queue)
 
 }
 
-void consumer_producer_signal_finished(consumer_producer_t* queue) 
-{
+void consumer_producer_signal_finished(consumer_producer_t* queue) {
+    printf("DEBUG: signal_finished called\n");
     if (NULL == queue) {
+        printf("DEBUG: queue is NULL!\n");
         return;
     }
-
-    // signal that processing is finished
+    printf("DEBUG: calling monitor_signal\n");
     monitor_signal(&queue->finished_monitor);
+    printf("DEBUG: monitor_signal completed\n");
 }
 
-int consumer_producer_wait_finished(consumer_producer_t* queue)
-{
+int consumer_producer_wait_finished(consumer_producer_t* queue) {
+    printf("DEBUG: wait_finished called\n");
     if (NULL == queue) {
+        printf("DEBUG: queue is NULL!\n");
         return -1;
     }
-
-    // wait for processing to be finished
+    printf("DEBUG: calling monitor_wait\n");
     if (0 != monitor_wait(&queue->finished_monitor)) {
-        return -1; // error waiting for finished signal
+        printf("DEBUG: monitor_wait failed\n");
+        return -1;
     }
-
-    return 0; // success
-    
-
+    printf("DEBUG: monitor_wait succeeded\n");
+    return 0;
 }
 
 /*** HELPER FUNCTIONS ***/
