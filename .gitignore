@@ -9,3 +9,9 @@ bin/
 .DS_Store
 *.tmp
 
+.vscode/
+Final Project - Modular Pipeline System (1).pdf
+
+tests/diagnose_deadlock.sh
+tests/monitor_stress_debug.c
+tests/monitor_tests.c

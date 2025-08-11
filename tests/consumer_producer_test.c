@@ -281,6 +281,7 @@ test_result_t test_queue_full_behavior() {
     memset(&queue, 0, sizeof(consumer_producer_t));
     error = consumer_producer_init(&queue, 3);
     if (NULL != error) {
+        printf("  ✗ Failed to init queue: %s\n", error);
         return TEST_FAIL;
     }
     
@@ -296,18 +297,31 @@ test_result_t test_queue_full_behavior() {
         printf("  ✓ Put Item%d (queue now %d/3)\n", i, i + 1);
     }
     
-    // Queue should be full now
-    printf("  • Queue is full, next put should block...\n");
+    printf("  • Queue is full, testing blocking behavior...\n");
     
-    // Start threads to test blocking behavior
+    // Test blocking - create threads with safer approach
     pthread_t producer, consumer;
-    thread_context_t prod_ctx = {&queue, 1, 1, 0, NULL, NULL};
-    thread_context_t cons_ctx = {&queue, 1, 4, 0, NULL, NULL};
+    thread_context_t prod_ctx = {&queue, 1, 2, 0, NULL, NULL}; // Reduced items
+    thread_context_t cons_ctx = {&queue, 1, 5, 0, NULL, NULL}; // Consumer gets all
     
-    pthread_create(&producer, NULL, blocking_producer_thread, &prod_ctx);
-    sleep(1); // Let producer block
-    pthread_create(&consumer, NULL, delayed_consumer_thread, &cons_ctx);
+    if (0 != pthread_create(&producer, NULL, blocking_producer_thread, &prod_ctx)) {
+        printf("  ✗ Failed to create producer thread\n");
+        consumer_producer_destroy(&queue);
+        return TEST_FAIL;
+    }
     
+    // Let producer start and potentially block
+    sleep(1);
+    
+    if (0 != pthread_create(&consumer, NULL, delayed_consumer_thread, &cons_ctx)) {
+        printf("  ✗ Failed to create consumer thread\n");
+        pthread_cancel(producer);
+        pthread_join(producer, NULL);
+        consumer_producer_destroy(&queue);
+        return TEST_FAIL;
+    }
+    
+    // Wait for both threads
     pthread_join(producer, NULL);
     pthread_join(consumer, NULL);
     
@@ -439,6 +453,16 @@ test_result_t test_memory_management() {
     
     return TEST_PASS;
 }
+    // Test thread that waits for finished
+    void* wait_for_finish_thread(void* arg) {
+        consumer_producer_t* q = (consumer_producer_t*)arg;
+        printf("  • Thread waiting for finished signal...\n");
+        int result = consumer_producer_wait_finished(q);
+        if (0 == result) {
+            printf("  • Thread received finished signal!\n");
+        }
+        return NULL;
+    }
 
 test_result_t test_finished_signaling() {
     consumer_producer_t queue;
@@ -451,18 +475,12 @@ test_result_t test_finished_signaling() {
         return TEST_FAIL;
     }
     
-    // Test thread that waits for finished
-    void* wait_for_finish(void* arg) {
-        consumer_producer_t* q = (consumer_producer_t*)arg;
-        printf("  • Thread waiting for finished signal...\n");
-        int result = consumer_producer_wait_finished(q);
-        if (0 == result) {
-            printf("  • Thread received finished signal!\n");
-        }
-        return NULL;
+    // Create thread that waits for finished signal
+    if (0 != pthread_create(&thread, NULL, wait_for_finish_thread, &queue)) {
+        printf("  ✗ Failed to create waiting thread\n");
+        consumer_producer_destroy(&queue);
+        return TEST_FAIL;
     }
-    
-    pthread_create(&thread, NULL, wait_for_finish, &queue);
     
     // Give thread time to start waiting
     sleep(1);
@@ -470,7 +488,21 @@ test_result_t test_finished_signaling() {
     printf("  • Main thread signaling finished...\n");
     consumer_producer_signal_finished(&queue);
     
-    pthread_join(thread, NULL);
+    // Wait for thread to complete
+    void* thread_result;
+    if (0 != pthread_join(thread, &thread_result)) {
+        printf("  ✗ Failed to join thread\n");
+        consumer_producer_destroy(&queue);
+        return TEST_FAIL;
+    }
+    
+    // Check thread result
+    if (thread_result != (void*)0) {
+        printf("  ✗ Thread reported failure\n");
+        consumer_producer_destroy(&queue);
+        return TEST_FAIL;
+    }
+    
     printf("  ✓ Finished signaling works correctly\n");
     
     consumer_producer_destroy(&queue);

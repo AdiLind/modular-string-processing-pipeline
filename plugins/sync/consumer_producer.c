@@ -27,7 +27,6 @@ const char* consumer_producer_init(consumer_producer_t* queue, int capacity)
     queue->items = NULL;
     queue->mutex_initialized = 0; 
 
-    // Allocate items array
     queue->items = (char**)calloc(capacity, sizeof(char*));
     if (NULL == queue->items) 
     {
@@ -81,7 +80,6 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
     // free the items in the queue
     if (NULL != queue->items) 
     {
-        //int i;
         for (int i = 0; i < queue->capacity; i++) {
             if (NULL != queue->items[i]) {
                 free(queue->items[i]);
@@ -123,6 +121,58 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
     and we need to release the mutex while we are waiting and the operation should be atomic
 */
 
+const char* consumer_producer_put(consumer_producer_t* queue, const char* item) {
+    if (NULL == queue || NULL == item) {
+        return "Queue or item pointer is NULL";
+    }
+
+    if (NULL == queue->items) {
+        return "Queue items array is not initialized";
+    }
+    
+    while (1) {
+        pthread_mutex_lock(&queue->queue_mutex);
+        
+        // Check condition while holding lock
+        if (queue->count < queue->capacity) {
+            // Space available - perform operation
+            char* copy_of_item = strdup(item);
+            if (NULL == copy_of_item) {
+                pthread_mutex_unlock(&queue->queue_mutex);
+                return "Failed to copy item string";
+            }
+            
+            // Add item
+            queue->items[queue->tail] = copy_of_item;
+            queue->tail = (queue->tail + 1) % queue->capacity;
+            queue->count++;
+            
+            // Release lock before signaling
+            pthread_mutex_unlock(&queue->queue_mutex);
+            
+            // Signal that queue is not empty (wake up consumers)
+            monitor_signal(&queue->not_empty_monitor);
+            
+            return NULL; // Success
+        }
+        
+        // Condition not met - prepare to wait
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        // Wait for condition to change
+        monitor_reset(&queue->not_full_monitor);
+        if (0 != monitor_wait(&queue->not_full_monitor)) {
+            return "Failed to wait for not_full condition";
+        }
+        
+        // Condition changed - retry the operation
+    }
+}
+
+
+
+/* 
+**old version 
 const char* consumer_producer_put(consumer_producer_t* queue, const char* item) {
 
     if (NULL == queue || NULL == item) {
@@ -180,6 +230,53 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
     return NULL; //success 
 }
 
+*/
+
+char* consumer_producer_get(consumer_producer_t* queue) {
+    if (NULL == queue) {
+        return NULL;
+    }
+    
+    if (NULL == queue->items) {
+        return NULL;
+    }
+
+    while (1) {
+        pthread_mutex_lock(&queue->queue_mutex);
+        
+        // Check condition while holding lock
+        if (queue->count > 0) {
+            // Items available - perform operation
+            char* item = queue->items[queue->head];
+            queue->items[queue->head] = NULL;
+            queue->head = (queue->head + 1) % queue->capacity;
+            queue->count--;
+            
+            // Release lock before signaling
+            pthread_mutex_unlock(&queue->queue_mutex);
+            
+            // Signal that queue is not full (wake up producers)
+            monitor_signal(&queue->not_full_monitor);
+            
+            return item; // Success
+        }
+        
+        // Condition not met - prepare to wait
+        pthread_mutex_unlock(&queue->queue_mutex);
+        
+        // Wait for condition to change
+        monitor_reset(&queue->not_empty_monitor);
+        if (0 != monitor_wait(&queue->not_empty_monitor)) {
+            return NULL; // Wait failed
+        }
+        
+        // Condition changed - retry the operation
+    }
+}
+
+
+/*
+* old version
 char* consumer_producer_get(consumer_producer_t* queue) 
 {
     if (NULL == queue) {
@@ -222,6 +319,8 @@ char* consumer_producer_get(consumer_producer_t* queue)
     return item; //return the item (the caller responsible for freeing it - we made a copy) #TODO: check if this is the correct approach
 
 }
+
+*/
 
 void consumer_producer_signal_finished(consumer_producer_t* queue) {
     printf("DEBUG: signal_finished called\n");

@@ -117,13 +117,20 @@ int monitor_wait(monitor_t* monitor)
         return -1;
     }
 
+    if (monitor->signaled) 
+    {
+        //if already signaled - return immediately
+        pthread_mutex_unlock(&monitor->mutex);
+        return 0;
+    }
+
     while (0 == monitor->signaled)
     {
         //wait for the condition variable, we releases the mutex while waiting
         wait_result = pthread_cond_wait(&monitor->condition, &monitor->mutex);
         if (wait_result != 0) {
             fprintf(stderr, "[monitor_wait] Error: pthread_cond_wait failed with error %d\n", wait_result);
-           pthread_mutex_unlock(&monitor->mutex); // this line maybe not correct what if the mutex is already locked? or undefined?
+            //pthread_mutex_unlock(&monitor->mutex); // this line maybe not correct what if the mutex is already locked? or undefined?
             return -1;
         }
     }

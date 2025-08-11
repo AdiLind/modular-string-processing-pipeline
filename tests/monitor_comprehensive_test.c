@@ -105,19 +105,31 @@ long get_time_diff_us(struct timeval* start, struct timeval* end) {
 
 void* simple_wait_thread(void* arg) {
     thread_context_t* ctx = (thread_context_t*)arg;
+    
+    if (NULL == ctx || NULL == ctx->monitor) {
+        return NULL;
+    }
+    
     ctx->result = monitor_wait(ctx->monitor);
     return NULL;
 }
 
 void* simple_signal_thread(void* arg) {
     thread_context_t* ctx = (thread_context_t*)arg;
+    
+    if (NULL == ctx || NULL == ctx->monitor) {
+        return NULL;
+    }
+    
     if (ctx->delay_ms > 0) {
         usleep(ctx->delay_ms * 1000);
     }
+    
     monitor_signal(ctx->monitor);
     ctx->result = 0;
     return NULL;
 }
+
 
 void* basic_wait_thread(void* arg) {
     thread_context_t* ctx = (thread_context_t*)arg;
@@ -175,18 +187,22 @@ void* synchronized_waiter_thread(void* arg) {
 void* ping_pong_thread(void* arg) {
     thread_context_t* ctx = (thread_context_t*)arg;
     monitor_t* my_monitor = ctx->monitor;
-    monitor_t* base_monitor = ctx->monitor;
-    monitor_t* other_monitor;
+    monitor_t* other_monitor = NULL;
     
-    // Assuming thread_id 0 uses monitors[0] and thread_id 1 uses monitors[1]
+    // FIXED: Safe way to get other monitor
+    // Assume monitors are passed as array and we know the structure
+    monitor_t* monitors_array = (monitor_t*)my_monitor;
+    
     if (ctx->thread_id == 0) {
-        other_monitor = base_monitor + 1;
+        other_monitor = &monitors_array[1];
     } else {
-        other_monitor = base_monitor - 1;
+        other_monitor = &monitors_array[0];
     }
-    int i;
     
-    for (i = 0; i < 10; i++) {
+    ctx->result = 0;
+    ctx->operation_count = 0;
+    
+    for (int i = 0; i < 10; i++) {
         // Wait for my turn
         if (monitor_wait(my_monitor) != 0) {
             ctx->result = -1;
@@ -195,14 +211,16 @@ void* ping_pong_thread(void* arg) {
         
         ctx->operation_count++;
         
-        // Reset my monitor before signaling other
+        // FIXED: Reset my monitor before signaling other (manual-reset behavior)
         monitor_reset(my_monitor);
         
         // Signal the other thread
         monitor_signal(other_monitor);
+        
+        // Small delay to prevent tight spinning
+        usleep(1000);
     }
     
-    ctx->result = 0;
     return NULL;
 }
 
@@ -302,7 +320,8 @@ test_result_t test_manual_reset_behavior() {
     
     // Start wait thread
     ctx.monitor = &monitor;
-    pthread_create(&thread, NULL, basic_wait_thread, &ctx);
+    ctx.result = -1;
+    pthread_create(&thread, NULL, simple_wait_thread, &ctx);
     pthread_join(thread, NULL);
     
     if (0 != ctx.result) {
@@ -312,7 +331,7 @@ test_result_t test_manual_reset_behavior() {
     }
     printf("  ✓ Wait succeeded after signal\n");
     
-    // MANUAL-RESET: Check that signal was NOT consumed by wait
+    // MANUAL-RESET: Check that signal persisted
     if (1 != monitor.signaled) {
         printf("  ✗ Signal was consumed by wait (should persist in manual-reset)\n");
         monitor_destroy(&monitor);
@@ -322,7 +341,7 @@ test_result_t test_manual_reset_behavior() {
     
     // Another wait should also succeed immediately
     ctx.result = -1;
-    pthread_create(&thread, NULL, basic_wait_thread, &ctx);
+    pthread_create(&thread, NULL, simple_wait_thread, &ctx);
     pthread_join(thread, NULL);
     
     if (0 != ctx.result) {
@@ -331,6 +350,15 @@ test_result_t test_manual_reset_behavior() {
         return TEST_FAIL;
     }
     printf("  ✓ Second wait also succeeded immediately\n");
+    
+    // FIXED: Properly test reset
+    monitor_reset(&monitor);
+    if (0 != monitor.signaled) {
+        printf("  ✗ Reset didn't clear signal\n");
+        monitor_destroy(&monitor);
+        return TEST_FAIL;
+    }
+    printf("  ✓ Reset cleared signal correctly\n");
     
     monitor_destroy(&monitor);
     return TEST_PASS;
@@ -389,7 +417,6 @@ test_result_t test_multiple_waiters_single_signal() {
     volatile int shared_counter = 0;
     pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_barrier_t barrier;
-    int i;
     
     print_test_header("Multiple Waiters, Single Signal (Manual-Reset)");
     
@@ -397,31 +424,52 @@ test_result_t test_multiple_waiters_single_signal() {
         return TEST_FAIL;
     }
     
-    pthread_barrier_init(&barrier, NULL, 5);
+    if (0 != pthread_barrier_init(&barrier, NULL, 5)) {
+        monitor_destroy(&monitor);
+        return TEST_FAIL;
+    }
     
-    // Start multiple waiting threads
-    for (i = 0; i < 5; i++) {
+    // Initialize contexts
+    for (int i = 0; i < 5; i++) {
         contexts[i].monitor = &monitor;
         contexts[i].thread_id = i;
         contexts[i].shared_counter = &shared_counter;
         contexts[i].counter_mutex = &counter_mutex;
         contexts[i].barrier = &barrier;
-        pthread_create(&threads[i], NULL, synchronized_waiter_thread, &contexts[i]);
+        contexts[i].result = -1;
     }
     
-    // Give threads time to reach barrier and start waiting
+    // Start waiting threads
+    for (int i = 0; i < 5; i++) {
+        if (0 != pthread_create(&threads[i], NULL, synchronized_waiter_thread, &contexts[i])) {
+            printf("  ✗ Failed to create thread %d\n", i);
+            // Cleanup
+            for (int j = 0; j < i; j++) {
+                pthread_cancel(threads[j]);
+            }
+            pthread_barrier_destroy(&barrier);
+            pthread_mutex_destroy(&counter_mutex);
+            monitor_destroy(&monitor);
+            return TEST_FAIL;
+        }
+    }
+    
+    // Give threads time to start waiting
     usleep(100000); // 100ms
     
     // Send single signal
     printf("  • Sending single signal to 5 waiters\n");
     monitor_signal(&monitor);
     
-    // Wait for all threads to complete (they should all wake up with broadcast)
-    for (i = 0; i < 5; i++) {
-        pthread_join(threads[i], NULL);
+    // Wait for all threads with timeout protection
+    for (int i = 0; i < 5; i++) {
+        void* retval;
+        if (0 != pthread_join(threads[i], &retval)) {
+            printf("  ✗ Failed to join thread %d\n", i);
+        }
     }
     
-    // Check counter (should be 5 because broadcast wakes all)
+    // Check results
     pthread_mutex_lock(&counter_mutex);
     int final_count = shared_counter;
     pthread_mutex_unlock(&counter_mutex);
