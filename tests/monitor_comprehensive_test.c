@@ -182,16 +182,25 @@ void* synchronized_waiter_thread(void* arg) {
     return NULL;
 }
 
-/* FIXED: Ping-pong thread with proper synchronization */
 void* ping_pong_thread(void* arg) {
     thread_context_t* ctx = (thread_context_t*)arg;
-    monitor_t* my_monitor = ctx->monitor;
-    monitor_t* other_monitor = ((monitor_t*)ctx->monitor) + (1 - ctx->thread_id);
+    
+    // FIX: Properly determine which monitors to use
+    monitor_t* my_monitor;
+    monitor_t* other_monitor;
+    
+    if (ctx->thread_id == 0) {
+        my_monitor = ctx->monitor;  // monitors[0]
+        other_monitor = ctx->monitor + 1;  // monitors[1]
+    } else {
+        my_monitor = ctx->monitor;  // monitors[1]
+        other_monitor = ctx->monitor - 1;  // monitors[0]
+    }
     
     ctx->result = 0;
     ctx->operation_count = 0;
     
-    for (int i = 0; i < 5; i++) { // Reduced iterations to prevent deadlock
+    for (int i = 0; i < 5; i++) {
         // Wait for my turn
         if (monitor_wait(my_monitor) != 0) {
             ctx->result = -1;
@@ -207,7 +216,7 @@ void* ping_pong_thread(void* arg) {
         monitor_signal(other_monitor);
         
         // Small delay to prevent race conditions
-        usleep(2000); // Increased delay
+        usleep(2000);
     }
     
     return NULL;
