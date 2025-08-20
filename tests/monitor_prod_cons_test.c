@@ -78,31 +78,44 @@ void test_monitor_wait_before_signal() {
     pthread_join(tid, NULL);
     monitor_destroy(&m);
 }
-
 void test_monitor_signal_consumption() {
-    printf("3. test_monitor_signal_consumption:\n");
+    printf("3. test_monitor_manual_reset_behavior:\n");
     monitor_t m;
-    pthread_t tid;
-    int flag = 0;
-    thread_arg_t args = {&m, &flag};
+    pthread_t tid1, tid2;
+    int flag1 = 0, flag2 = 0;
+    thread_arg_t args1 = {&m, &flag1};
+    thread_arg_t args2 = {&m, &flag2};
     
     assert(monitor_init(&m) == 0);
     
+    // Signal once
     monitor_signal(&m);
-    monitor_wait(&m); // This should consume the signal
     
-    // The monitor state should now be non-signaled. A subsequent wait should block.
-    pthread_create(&tid, NULL, wait_then_signal_thread, &args);
+    // First wait should succeed immediately
+    monitor_wait(&m);
+    
+    // MANUAL-RESET: Signal should still be set!
+    // Second wait should also succeed immediately
+    monitor_wait(&m);
+    
+    // Both waits succeeded because signal persisted (manual-reset behavior)
+    printf("  Manual-reset behavior verified: signal persisted\n");
+    
+    // Now test that reset actually clears the signal
+    monitor_reset(&m);
+    
+    // After reset, wait should block
+    pthread_create(&tid1, NULL, wait_then_signal_thread, &args1);
     
     monitor_wait(&m); // Should block until thread signals
     
-    if (flag == 1) {
+    if (flag1 == 1) {
         TEST_PASSED();
     } else {
-        TEST_FAILED("Second wait did not seem to block and consume the new signal.");
+        TEST_FAILED("Wait did not block after reset.");
     }
     
-    pthread_join(tid, NULL);
+    pthread_join(tid1, NULL);
     monitor_destroy(&m);
 }
 
@@ -235,7 +248,8 @@ void test_producer_blocks_on_full() {
     assert(consumer_producer_init(&q, 1) == NULL);
     producer_args args = {&q, 1, 1, &produced_count};
 
-    consumer_producer_put(&q, strdup("item1"));
+    char* item_copy = strdup("item1");
+    consumer_producer_put(&q, item_copy);
     assert(produced_count == 0); // Local counter not used for first item
     
     // This producer should block because the queue is full.
