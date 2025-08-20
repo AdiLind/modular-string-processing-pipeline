@@ -105,41 +105,132 @@ void* plugin_consumer_thread(void* arg)
     return NULL;
 }
 
-
+/// עדי של העתיד שלום, אתה עכשיו צריך לממש את ההחלק של הINIT ////
+// בהצלחה גיבור
 
 const char* common_plugin_init(const char* (*process_function)(const char*), 
                               const char* name, int queue_size) {
-    // TODO: Implement
+
+    const char* error;
+    validate_init_params(process_function, name, queue_size);
+
+    //init context
+    g_plugin_context.name = name;
+    g_plugin_context.process_function = process_function;
+    g_plugin_context.next_place_work = NULL;
+    g_plugin_context.finished = 0;
+    g_plugin_context.thread_created = 0;
+
+    //init and allocate queue
+    g_plugin_context.queue = (consumer_producer_t*)malloc(sizeof(consumer_producer_t));
+    if (NULL == g_plugin_context.queue) {
+        return "Failed to allocate memory for queue structure";
+    }
+
+    error = consumer_producer_init(g_plugin_context.queue, queue_size);
+    if (NULL != error) {
+        free(g_plugin_context.queue);
+        g_plugin_context.queue = NULL;
+        return error;
+    }
+    
+    //create the consumer thread
+    if(0 != pthread_create(&g_plugin_context.consumer_thread, NULL, plugin_consumer_thread, &g_plugin_context))
+    {
+        consumer_producer_destroy(g_plugin_context.queue);
+        free(g_plugin_context.queue);
+        g_plugin_context.queue = NULL;
+        return "Failed occour when creating consumer thread";
+    }
+
+    g_plugin_context.initialized = 1;
+    g_plugin_context.thread_created = 1;
+
+
     return NULL;
 }
 
-const char* plugin_init(int queue_size) {
-    // TODO: Implement
-    return NULL;
+// each plugin should implement this function
+// const char* plugin_init(int queue_size) {
+//     // TODO: Implement
+//     return NULL;
+// }
+
+const char* plugin_fini(void) 
+{
+
+    if (!g_plugin_context.initialized)
+    {
+        return "Plugin not initialized";
+    }
+    if (g_plugin_context.thread_created) 
+    {
+        if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
+        {
+            log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
+        }
+        g_plugin_context.thread_created = 0;
+
+    }
+    // destroy and free queue cleanup all the resources
+    if (NULL != g_plugin_context.queue) 
+    {
+        consumer_producer_destroy(g_plugin_context.queue);
+        free(g_plugin_context.queue);
+        g_plugin_context.queue = NULL;
+    }
+    
+    // reset the context
+    g_plugin_context.initialized = 0;
+    g_plugin_context.finished = 0;
+    g_plugin_context.name = NULL;
+    g_plugin_context.process_function = NULL;
+    g_plugin_context.next_place_work = NULL;
+
+    return NULL; 
+
 }
 
-const char* plugin_fini(void) {
-    // TODO: Implement
-    return NULL;
+PLUGIN_EXPORT
+const char* plugin_place_work(const char* str) 
+{
+    if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
+    if (NULL == str) { return "Input string is NULL"; }
+    char* str_copy = strdup(str);
+    if (NULL == str_copy) { return "Failed to copy input string"; }
+    const char* error = consumer_producer_put(g_plugin_context.queue, str_copy);
+    if (NULL != error) {
+        free(str_copy);
+        return error;
+    }
+
+    return NULL; 
 }
 
-const char* plugin_place_work(const char* str) {
-    // TODO: Implement
-    return NULL;
-}
-
+PLUGIN_EXPORT
 const char* plugin_get_name(void) {
-    // TODO: Implement
-    return NULL;
+    return g_plugin_context.name ? g_plugin_context.name : "Unknown Plugin";
 }
 
-void plugin_attach(const char* (*next_place_work)(const char*)) {
-    // TODO: Implement
+
+PLUGIN_EXPORT
+void plugin_attach(const char* (*next_place_work)(const char*))
+{
+    g_plugin_context.next_place_work = next_place_work;   
 }
 
-const char* plugin_wait_finished(void) {
-    // TODO: Implement
-    return NULL;
+PLUGIN_EXPORT
+const char* plugin_wait_finished(void) 
+{
+
+    if(!g_plugin_context.initialized) { return "Plugin not initialized"; }
+    if(NULL == g_plugin_context.queue) { return "Queue not initialized"; }
+    
+    //wait until we grt the finish signal from the queue
+    int wait_result = consumer_producer_wait_finished(g_plugin_context.queue);
+    if (0 != wait_result) {
+        return "fail while waiting for finished condition";
+    }
 }
 
 /* ////////////////////////////////////////*/
