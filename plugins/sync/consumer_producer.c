@@ -234,41 +234,39 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
 
 char* consumer_producer_get(consumer_producer_t* queue) {
     if (NULL == queue) {
-        printf("DEBUG: queue is NULL\n");
+        //printf("DEBUG: queue is NULL\n");
         return NULL;
     }
     
     if (NULL == queue->items) {
-        printf("DEBUG: queue->items is NULL\n");
+        //printf("DEBUG: queue->items is NULL\n");
         return NULL;
     }
 
     
-    printf("DEBUG: About to lock mutex for get operation\n");
-    printf("DEBUG: queue->count = %d, queue->head = %d, queue->capacity = %d\n", 
-           queue->count, queue->head, queue->capacity);
+    //printf("DEBUG: About to lock mutex for get operation\n");
+    //printf("DEBUG: queue->count = %d, queue->head = %d, queue->capacity = %d\n", queue->count, queue->head, queue->capacity);
     while (1) {
         pthread_mutex_lock(&queue->queue_mutex);
 
-        printf("DEBUG: Locked mutex, checking condition (count > 0)\n");
-        printf("DEBUG: queue->count = %d\n", queue->count);
+        //printf("DEBUG: Locked mutex, checking condition (count > 0)\n");
+        //printf("DEBUG: queue->count = %d\n", queue->count);
         
         // Check condition while holding lock
         if (queue->count > 0) {
 
-            printf("DEBUG: Found items, getting item at head = %d\n", queue->head);
-            printf("DEBUG: About to access queue->items[%d]\n", queue->head);
-            printf("DEBUG: queue->items pointer = %p\n", (void*)queue->items);  
-            printf("DEBUG: queue->items[%d] pointer check\n", queue->head); 
+            //printf("DEBUG: Found items, getting item at head = %d\n", queue->head);
+            //printf("DEBUG: About to access queue->items[%d]\n", queue->head);
+            //printf("DEBUG: queue->items pointer = %p\n", (void*)queue->items);  
+            //printf("DEBUG: queue->items[%d] pointer check\n", queue->head); 
             // Items available - perform operation
             char* item = queue->items[queue->head];
-            printf("DEBUG: Successfully accessed item: %s\n", item ? item : "NULL");
+            //printf("DEBUG: Successfully accessed item: %s\n", item ? item : "NULL");
             queue->items[queue->head] = NULL;
             queue->head = (queue->head + 1) % queue->capacity;
             queue->count--;
 
-            printf("DEBUG: Updated queue state - count: %d, head: %d\n", 
-            queue->count, queue->head);
+            //printf("DEBUG: Updated queue state - count: %d, head: %d\n", queue->count, queue->head);
             
             // Release lock before signaling
             pthread_mutex_unlock(&queue->queue_mutex);
@@ -279,19 +277,19 @@ char* consumer_producer_get(consumer_producer_t* queue) {
             return item; // Success
         }
         
-        printf("DEBUG: Queue is empty, preparing to wait\n");
+        //printf("DEBUG: Queue is empty, preparing to wait\n");
         // Condition not met - prepare to wait
         pthread_mutex_unlock(&queue->queue_mutex);
         
         // Wait for condition to change
         monitor_reset(&queue->not_empty_monitor);
-        printf("DEBUG: About to wait on not_empty_monitor\n");
+        //printf("DEBUG: About to wait on not_empty_monitor\n");
         if (0 != monitor_wait(&queue->not_empty_monitor)) {
-            printf("DEBUG: monitor_wait failed\n");
+            //printf("DEBUG: monitor_wait failed\n");
             return NULL; // Wait failed
         }
         
-        printf("DEBUG: monitor_wait returned, retrying\n");
+        //printf("DEBUG: monitor_wait returned, retrying\n");
         // Condition changed - retry the operation
     }
 }
@@ -345,28 +343,28 @@ char* consumer_producer_get(consumer_producer_t* queue)
 */
 
 void consumer_producer_signal_finished(consumer_producer_t* queue) {
-    printf("DEBUG: signal_finished called\n");
+    //printf("DEBUG: signal_finished called\n");
     if (NULL == queue) {
-        printf("DEBUG: queue is NULL!\n");
+        //printf("DEBUG: queue is NULL!\n");
         return;
     }
-    printf("DEBUG: calling monitor_signal\n");
+    //printf("DEBUG: calling monitor_signal\n");
     monitor_signal(&queue->finished_monitor);
-    printf("DEBUG: monitor_signal completed\n");
+    //printf("DEBUG: monitor_signal completed\n");
 }
 
 int consumer_producer_wait_finished(consumer_producer_t* queue) {
-    printf("DEBUG: wait_finished called\n");
+    //printf("DEBUG: wait_finished called\n");
     if (NULL == queue) {
-        printf("DEBUG: queue is NULL!\n");
+        //printf("DEBUG: queue is NULL!\n");
         return -1;
     }
-    printf("DEBUG: calling monitor_wait\n");
+    //printf("DEBUG: calling monitor_wait\n");
     if (0 != monitor_wait(&queue->finished_monitor)) {
-        printf("DEBUG: monitor_wait failed\n");
+        //printf("DEBUG: monitor_wait failed\n");
         return -1;
     }
-    printf("DEBUG: monitor_wait succeeded\n");
+    //printf("DEBUG: monitor_wait succeeded\n");
     return 0;
 }
 

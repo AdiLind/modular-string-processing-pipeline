@@ -69,7 +69,7 @@ void* plugin_consumer_thread(void* arg)
 
     while(!plugin_context->finished)
     {
-        // Retrieve next item from queue, blocks if empty
+        // retrieve next item from queue, blocks if empty
         char* input_string = consumer_producer_get(plugin_context->queue);
         if(NULL == input_string)
         {
@@ -82,8 +82,10 @@ void* plugin_consumer_thread(void* arg)
         {
             //if we get <END> through this plugin's transformation 
             const char* processed_signal = plugin_context->process_function(input_string); 
+
             // forward the signal to the next plugin if attached
             forward_to_next_plugin(plugin_context, processed_signal ? processed_signal : input_string); 
+
             //free the allocated memory only if transformation allocated new memory
             if (processed_signal != NULL && processed_signal != input_string) {
                 free((char*)processed_signal);
@@ -92,7 +94,7 @@ void* plugin_consumer_thread(void* arg)
 
             plugin_context->finished = 1;
             consumer_producer_signal_finished(plugin_context->queue);
-            //break;
+            break;
         }
 
         // if got into this  line so the input string is not a <END>, so we need to process it
@@ -196,7 +198,19 @@ const char* plugin_fini(void)
 {
 
     if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
-    
+
+    if (g_plugin_context.thread_created && !g_plugin_context.finished) 
+    {
+        // Send <END> to wake up the thread and make it exit
+        const char* error = plugin_place_work("<END>");
+        if (error != NULL) {
+            log_error(&g_plugin_context, "Failed to send termination signal");
+        }
+        
+        // Wait for the thread to process the END signal
+        plugin_wait_finished();
+    }
+
     if (g_plugin_context.thread_created) 
     {
         if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
@@ -206,6 +220,7 @@ const char* plugin_fini(void)
         g_plugin_context.thread_created = 0;
 
     }
+    
     // destroy and free queue cleanup all the resources
     if (NULL != g_plugin_context.queue) 
     {
@@ -267,6 +282,8 @@ const char* plugin_wait_finished(void)
     if (0 != wait_result) {
         return "fail while waiting for finished condition";
     }
+
+    return NULL;
 }
 
 /* ////////////////////////////////////////*/
