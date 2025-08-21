@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "consumer_producer.h"
 #include <stdlib.h>
 #include <string.h>

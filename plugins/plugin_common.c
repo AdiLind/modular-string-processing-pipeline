@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "plugin_common.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -11,8 +12,8 @@ plugin_context_t g_plugin_context = { .name = NULL, .queue = NULL, .consumer_thr
                                       .initialized = 0, .finished = 0, .thread_created = 0};
 
 /***** Helper Function Declaration  ******/  
-static void cleanup_plugin_resources(void);
-static void free_if_allocated(const char* processed, const char* original);
+//static void cleanup_plugin_resources(void);
+//static void free_if_allocated(const char* processed, const char* original);
 static void forward_to_next_plugin(plugin_context_t* ctx, const char* str);
 static const char* validate_init_params(const char* (*process_func)(const char*), 
                                                       const char* name, int queue_size);
@@ -220,7 +221,7 @@ const char* plugin_fini(void)
         g_plugin_context.thread_created = 0;
 
     }
-    
+
     // destroy and free queue cleanup all the resources
     if (NULL != g_plugin_context.queue) 
     {
@@ -310,11 +311,11 @@ static const char* validate_init_params(const char* (*process_func)(const char*)
     return NULL; 
 }
 
-static void free_if_allocated(const char* processed, const char* original) {
-    if (processed != NULL && processed != original) {
-        free((char*)processed);
-    }
-}
+// static void free_if_allocated(const char* processed, const char* original) {
+//     if (processed != NULL && processed != original) {
+//         free((char*)processed);
+//     }
+// }
 
 static void forward_to_next_plugin(plugin_context_t* curr_plugin, const char* str) {
     if (NULL != curr_plugin->next_place_work) {

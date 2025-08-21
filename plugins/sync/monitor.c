@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "monitor.h"
 #include <errno.h>
 #include <string.h>
@@ -109,8 +110,8 @@ void monitor_reset(monitor_t* monitor)
 
 int monitor_wait(monitor_t* monitor) 
 {
-    int lock_result = 0;
-    int unlock_result = 0;
+    //int lock_result = 0;
+    //int unlock_result = 0;
 
     if (NULL == monitor) {
         return -1;
