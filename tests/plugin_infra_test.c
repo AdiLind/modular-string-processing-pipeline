@@ -1073,7 +1073,7 @@ void minimal_queue_test() {
     
     if (queue.items[0]) {
         printf("Direct read successful: %s\n", queue.items[0]);
-        free(queue.items[0]);
+        //free(queue.items[0]);
     }
     
     consumer_producer_destroy(&queue);

@@ -258,6 +258,8 @@ char* consumer_producer_get(consumer_producer_t* queue) {
 
             printf("DEBUG: Found items, getting item at head = %d\n", queue->head);
             printf("DEBUG: About to access queue->items[%d]\n", queue->head);
+            printf("DEBUG: queue->items pointer = %p\n", (void*)queue->items);  
+            printf("DEBUG: queue->items[%d] pointer check\n", queue->head); 
             // Items available - perform operation
             char* item = queue->items[queue->head];
             printf("DEBUG: Successfully accessed item: %s\n", item ? item : "NULL");

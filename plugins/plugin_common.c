@@ -84,9 +84,11 @@ void* plugin_consumer_thread(void* arg)
             const char* processed_signal = plugin_context->process_function(input_string); 
             // forward the signal to the next plugin if attached
             forward_to_next_plugin(plugin_context, processed_signal ? processed_signal : input_string); 
-            //free the allocated memory
-            free_if_allocated(processed_signal, input_string);
-            free(input_string);
+            //free the allocated memory only if transformation allocated new memory
+            if (processed_signal != NULL && processed_signal != input_string) {
+                free((char*)processed_signal);
+            }
+            free(input_string);  // we always need to free the original input
 
             plugin_context->finished = 1;
             consumer_producer_signal_finished(plugin_context->queue);
@@ -105,7 +107,11 @@ void* plugin_consumer_thread(void* arg)
         forward_to_next_plugin(plugin_context, processed);
 
         //clean the mass before we exit
-        free_if_allocated(processed, input_string);
+        // free the processed string if it was allocated by the process_function
+        if (processed != input_string) {
+            free((char*)processed); 
+
+        }
         free(input_string);
     }
     
@@ -189,10 +195,8 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 const char* plugin_fini(void) 
 {
 
-    if (!g_plugin_context.initialized)
-    {
-        return "Plugin not initialized";
-    }
+    if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
+    
     if (g_plugin_context.thread_created) 
     {
         if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
