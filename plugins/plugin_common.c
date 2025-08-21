@@ -60,6 +60,13 @@ void* plugin_consumer_thread(void* arg)
         return NULL;
     }
 
+    //signal that the thread is ready
+    // this is used to notify the main thread that the consumer thread is ready to process items
+    pthread_mutex_lock(&plugin_context->ready_mutex);
+    plugin_context->thread_ready = 1;
+    pthread_cond_signal(&plugin_context->ready_cond);
+    pthread_mutex_unlock(&plugin_context->ready_mutex);
+
     while(!plugin_context->finished)
     {
         // Retrieve next item from queue, blocks if empty
@@ -112,9 +119,23 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
                               const char* name, int queue_size) {
 
     const char* error;
-    validate_init_params(process_function, name, queue_size);
+    const char* validation_error = validate_init_params(process_function, name, queue_size);
+    if (NULL != validation_error) {
+        return validation_error;
+    }
+    
+    //TODO: testing the neccessary of those validations - should move to the validate_init_params function
+    if (pthread_mutex_init(&g_plugin_context.ready_mutex, NULL) != 0) {
+        return "Failed to initialize ready mutex";
+    }
+    
+    if (pthread_cond_init(&g_plugin_context.ready_cond, NULL) != 0) {
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        return "Failed to initialize ready condition";
+    }
 
     //init context
+    g_plugin_context.thread_ready = 0;
     g_plugin_context.name = name;
     g_plugin_context.process_function = process_function;
     g_plugin_context.next_place_work = NULL;
@@ -142,6 +163,15 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
         g_plugin_context.queue = NULL;
         return "Failed occour when creating consumer thread";
     }
+
+    // waiting for the thread to be ready
+    pthread_mutex_lock(&g_plugin_context.ready_mutex);
+
+    while (!g_plugin_context.thread_ready) {
+        pthread_cond_wait(&g_plugin_context.ready_cond, &g_plugin_context.ready_mutex);
+    }
+
+    pthread_mutex_unlock(&g_plugin_context.ready_mutex);
 
     g_plugin_context.initialized = 1;
     g_plugin_context.thread_created = 1;
@@ -186,6 +216,8 @@ const char* plugin_fini(void)
     g_plugin_context.name = NULL;
     g_plugin_context.process_function = NULL;
     g_plugin_context.next_place_work = NULL;
+    pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+    pthread_cond_destroy(&g_plugin_context.ready_cond);
 
     return NULL; 
 
@@ -251,7 +283,7 @@ static const char* validate_init_params(const char* (*process_func)(const char*)
     }
     
     if (g_plugin_context.initialized) {
-        return "Plugin already exists";
+        return "Plugin already initialized";
     }
     
     return NULL; 

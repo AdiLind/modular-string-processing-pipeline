@@ -25,6 +25,9 @@ typedef struct
     int initialized;                               // Initialization flag 
     int finished;                                  // Finished processing flag 
     int thread_created;                            // Thread creation flag
+    pthread_mutex_t  ready_mutex;                   // Mutex for thread safety
+    pthread_cond_t ready_cond;                    // Condition variable for signaling
+    int thread_ready;                             // Flag to indicate that thread is ready
 } plugin_context_t; 
  
 // global plugin context, each plugin has its own instance/context

@@ -1039,6 +1039,46 @@ test_result_t test_memory_leak_prevention() {
     
     return TEST_PASS;
 }
+void minimal_queue_test() {
+    printf("=== MINIMAL QUEUE TEST ===\n");
+    
+    consumer_producer_t queue;
+    memset(&queue, 0, sizeof(consumer_producer_t));
+    
+    // Initialize
+    const char* error = consumer_producer_init(&queue, 5);
+    if (error) {
+        printf("Init failed: %s\n", error);
+        return;
+    }
+    
+    printf("Queue initialized. items pointer = %p\n", (void*)queue.items);
+    
+    // Check items array is accessible
+    for (int i = 0; i < 5; i++) {
+        queue.items[i] = NULL;  // This should not crash
+        printf("items[%d] = %p (should be NULL)\n", i, (void*)queue.items[i]);
+    }
+    
+    printf("Items array is accessible!\n");
+    
+    // Test direct assignment (bypass put/get logic)
+    queue.items[0] = strdup("test_direct");
+    queue.count = 1;
+    queue.head = 0;
+    queue.tail = 1;
+    
+    printf("Direct assignment done. About to read...\n");
+    printf("queue.items[0] = %p\n", (void*)queue.items[0]);
+    
+    if (queue.items[0]) {
+        printf("Direct read successful: %s\n", queue.items[0]);
+        free(queue.items[0]);
+    }
+    
+    consumer_producer_destroy(&queue);
+    printf("=== MINIMAL TEST COMPLETE ===\n");
+}
 
 test_result_t test_thread_cleanup() {
     print_test_header("Thread Cleanup Verification");
@@ -1103,6 +1143,10 @@ int main(int argc, char* argv[]) {
     }
     
     debug_log("=== COMPREHENSIVE PLUGIN TEST SUITE STARTED ===");
+
+    // Run minimal queue test
+    printf("Running minimal queue test...");
+    minimal_queue_test();
     
     // Monitor Tests
     print_test_result("Monitor Basic Functionality", 
