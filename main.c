@@ -49,7 +49,7 @@ static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, in
 static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int num_of_plugins);
 static int read_input_and_process(plugin_handle_t* first_plugin_in_chain);
 static void free_plugin_resources(plugin_handle_t* plugin_handle);
-static void cleanup_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins);
+static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_of_plugins);
 
 
 /// *** Main Function *** ///
@@ -75,7 +75,7 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "Error: Not enough arguments.\n");
         display_usage_help();
-        return EXIT_FAILURE;
+        return 1;
     }
 
     int queue_size_for_plugins = parse_queue_size_arg(argv[1]);
@@ -95,7 +95,7 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "Error: Failed occur while loading plugins.\n");
         display_usage_help();
-        return EXIT_FAILURE;
+        return 1;
     }
 
     //step 3 - initialize all plugins - construct the pipeline
@@ -103,7 +103,7 @@ int main(int argc, char* argv[])
     if(-1 == init_result)
     {
         fprintf(stderr, "Error: Failed occur while initializing plugins.\n");
-        cleanup_all_plugins(loaded_plugins_arr, total_num_of_plugins);
+        cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
         return 2; // TODO: define error codes in a header file
     }
 
@@ -116,16 +116,16 @@ int main(int argc, char* argv[])
     if( 0 != read_and_processing_result)
     {
         fprintf(stderr, "Error: Failed occur while reading input and processing.\n");
-        cleanup_all_plugins(loaded_plugins_arr, total_num_of_plugins);
-        return EXIT_FAILURE;
+        cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
+        return 1;
     }
 
     //step 6 - graceful shutdown all the plugins - after processing is done or error
-    cleanup_all_plugins(loaded_plugins_arr, total_num_of_plugins);
+    cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
     //step 8 - clean up all resources allocated for plugins and the mass we allocated for them
     //step 9 - print exit 
-    printf("Program completed successfully.\n");
-    return EXIT_SUCCESS; 
+    printf("Pipeline shutdown complete");
+    return 0; 
 }
 
 
@@ -260,6 +260,8 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
         return EXIT_FAILURE;
     }
 
+    return EXIT_SUCCESS;
+
 }
 
 static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[])
@@ -286,7 +288,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
         {
             fprintf(stderr, "Error: Failed to load plugin: %s\n", plugin_names[current_plugin_index]);
             //cleanup all the plugins we have loaded so far
-            cleanup_all_plugins(plugins_array, current_plugin_index);
+            cleanup_all_plugins_in_range(plugins_array, current_plugin_index);
             /*
             for(int j = 0; j < current_plugin_index; j++)
             {
@@ -303,7 +305,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
         {
             fprintf(stderr, "Error: Failed to extract functions from plugin: %s\n", plugin_names[current_plugin_index]);
             //cleanup all the plugins we have loaded so far
-            cleanup_all_plugins(plugins_array, current_plugin_index + 1); //include the current one
+            cleanup_all_plugins_in_range(plugins_array, current_plugin_index + 1); //include the current one
             free(plugins_array);
             return NULL;
         }
@@ -321,13 +323,13 @@ static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, in
     
 
     int current_plugin_index;
-    for(int current_plugin_index = 0; current_plugin_index < num_of_plugins; current_plugin_index++)
+    for(current_plugin_index = 0; current_plugin_index < num_of_plugins; current_plugin_index++)
     {
-        const char* init_error = plugins_arr[current_plugin_index].init;
-        if(NULL == init_error)
+        const char* init_error = plugins_arr[current_plugin_index].init(queue_size);
+        if(NULL != init_error)
         {
             fprintf(stderr, "Error: plugin_init function is NULL for plugin%s: %s\n", plugins_arr[current_plugin_index].plugin_name, init_error);
-            cleanup_all_plugins(plugins_arr, current_plugin_index);
+            cleanup_all_plugins_in_range(plugins_arr, current_plugin_index);
             return EXIT_FAILURE;
         }
 
@@ -411,7 +413,7 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle)
     }
 }
 
-static void cleanup_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins)
+static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_of_plugins)
 {
     if(NULL == plugins_arr || num_of_plugins <= 0)
     {
@@ -455,10 +457,10 @@ static void cleanup_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins
     free(plugins_arr);
 }
 
-static void display_usage(void) {
+static void display_usage_help(void) {
     printf("Usage: ./analyzer <queue_size> <plugin1> <plugin2> ... <pluginN>\n");
     printf("Arguments:\n");
-    printf("  queue_size  Maximum number of items in each plugin's queue\n");
+    printf("  queue_size  Maximum number of items in each plugin's queue \n");
     printf("  plugin1..N  Names of plugins to load (without .so extension)\n");
     printf("Available plugins:\n");
     printf("  logger      - Logs all strings that pass through\n");
