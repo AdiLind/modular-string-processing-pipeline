@@ -21,7 +21,7 @@ static const char* typewriter_transform(const char* input_to_type)
     fflush(stdout); //force immediate output
 
     for(int i=0; i < input_len; i++) {
-        fprintf("%c", input_to_type[i]);
+        fprintf(stdout, "%c", input_to_type[i]);
         fflush(stdout);
         usleep(TYPEWRITER_CHAR_DELAY_USLEEP);
     }
