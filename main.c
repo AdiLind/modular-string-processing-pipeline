@@ -260,5 +260,216 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
         return EXIT_FAILURE;
     }
 
-    
 }
+
+static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[])
+{
+    if(num_of_plugins <= 0 || NULL == plugin_names)
+    {
+        return NULL;
+    }
+
+    //allocate array for all plugins
+    plugin_handle_t* plugins_array = (plugin_handle_t*)calloc(num_of_plugins, sizeof(plugin_handle_t));
+    if(NULL == plugins_array)
+    {
+        fprintf(stderr, "Error: Failed to allocate memory for plugins array.\n");
+        return NULL;
+    }
+
+    //load one after another and extract their functions
+    int current_plugin_index;
+    for(current_plugin_index= 0; current_plugin_index < num_of_plugins; current_plugin_index++)
+    {
+        int single_plugin_load_result = load_single_plugin(&plugins_array[current_plugin_index], plugin_names[current_plugin_index]);
+        if(0 != single_plugin_load_result)
+        {
+            fprintf(stderr, "Error: Failed to load plugin: %s\n", plugin_names[current_plugin_index]);
+            //cleanup all the plugins we have loaded so far
+            cleanup_all_plugins(plugins_array, current_plugin_index);
+            /*
+            for(int j = 0; j < current_plugin_index; j++)
+            {
+                free_plugin_resources(&plugins_array[j]);
+            }
+            */
+            free(plugins_array);
+            return NULL;
+        }
+
+        //extract functions of this plugin
+        int extract_result = extract_plugin_funcs(&plugins_array[current_plugin_index], plugin_names[current_plugin_index]);
+        if(0 != extract_result)
+        {
+            fprintf(stderr, "Error: Failed to extract functions from plugin: %s\n", plugin_names[current_plugin_index]);
+            //cleanup all the plugins we have loaded so far
+            cleanup_all_plugins(plugins_array, current_plugin_index + 1); //include the current one
+            free(plugins_array);
+            return NULL;
+        }
+    }
+
+    return plugins_array;
+}
+
+static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, int queue_size)
+{
+    if(NULL == plugins_arr || num_of_plugins <= 0 || queue_size <= 0)
+    {
+        return EXIT_FAILURE;
+    }
+    
+
+    int current_plugin_index;
+    for(int current_plugin_index = 0; current_plugin_index < num_of_plugins; current_plugin_index++)
+    {
+        const char* init_error = plugins_arr[current_plugin_index].init;
+        if(NULL == init_error)
+        {
+            fprintf(stderr, "Error: plugin_init function is NULL for plugin%s: %s\n", plugins_arr[current_plugin_index].plugin_name, init_error);
+            cleanup_all_plugins(plugins_arr, current_plugin_index);
+            return EXIT_FAILURE;
+        }
+
+    }
+
+    return EXIT_SUCCESS;
+}
+
+static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int num_of_plugins)
+{
+    if(NULL == plugins_arr || num_of_plugins <= 0)
+    {
+        return;
+    }
+
+    //connect each plugin to the next one
+    for(int current_index = 0; current_index < num_of_plugins - 1; current_index++) // we stop at n-1 in order to avoid overflow in the last plugin
+    {
+        int next_index = current_index + 1;
+        plugins_arr[current_index].attach(plugins_arr[next_index].place_work);
+    }
+}
+
+static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
+{
+    if(NULL == first_plugin_in_chain)
+    {
+        return EXIT_FAILURE;
+    }
+
+    char input_line_buffer[Max_line_length];
+
+
+    while(NULL != fgets(input_line_buffer, sizeof(input_line_buffer), stdin) )
+    {
+        //remove '\n' characters if present the plugins assume they dont accepts new line characters
+        size_t line_len = strlen(input_line_buffer);
+        if(line_len > 0 && input_line_buffer[line_len - 1] == '\n')
+        {
+            input_line_buffer[line_len - 1] = '\0'; //remove the new line
+        }
+
+        //send to the first plugin in the chain
+        const char* place_work_error = first_plugin_in_chain->place_work(input_line_buffer);
+        if(NULL != place_work_error)
+        {
+            fprintf(stderr, "Error: Failed to place work to plugin %s: %s\n", first_plugin_in_chain->plugin_name, place_work_error);
+            return EXIT_FAILURE;
+        }
+
+        //check for EOF
+        if( 0 == strcmp(input_line_buffer, "<END>") )
+        {
+            break;
+        }
+    }
+
+
+    return EXIT_SUCCESS;
+}
+
+static void free_plugin_resources(plugin_handle_t* plugin_handle)
+{
+    if(NULL == plugin_handle)
+    {
+        return;
+    }
+
+    if(NULL != plugin_handle->plugin_name)
+    {
+        //free plugin name
+        free(plugin_handle->plugin_name);
+        plugin_handle->plugin_name = NULL;
+    }
+
+
+    if(NULL != plugin_handle->dynamic_library_handle)
+    {
+        dlclose(plugin_handle->dynamic_library_handle);
+        plugin_handle->dynamic_library_handle = NULL;
+    }
+}
+
+static void cleanup_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins)
+{
+    if(NULL == plugins_arr || num_of_plugins <= 0)
+    {
+        return;
+    }
+
+    for(int wait_index = 0; wait_index < num_of_plugins; wait_index++)
+    {
+        //wait until all plugins will finish processing
+        //TODO: are we sure we need to wait for all of them? what if one of them failed to initialize? or get into deadlock? חס וחלילה
+        if(NULL != plugins_arr[wait_index].wait_finished)
+        {
+            const char* wait_error = plugins_arr[wait_index].wait_finished();
+            if(NULL != wait_error)
+            {
+                plugins_arr[wait_index].wait_finished();
+                //fprintf(stderr, "Warning: plugin_wait_finished returned error for plugin %s: %s\n", plugins_arr[wait_index].plugin_name, wait_error);
+            }
+        }
+    }
+
+    //finalize  and free resources from all plugins
+    for(int fini_index = 0; fini_index < num_of_plugins; fini_index++)
+    {
+        
+
+        if(NULL != plugins_arr[fini_index].fini)
+        {
+            const char* fini_error = plugins_arr[fini_index].fini();
+            if(NULL != fini_error)
+            {
+                plugins_arr[fini_index].fini();
+                //fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", plugins_arr[fini_index].plugin_name, fini_error);
+            }
+        }
+
+        //free all resources allocated for this plugin
+        free_plugin_resources(&plugins_arr[fini_index]);
+    }
+
+    free(plugins_arr);
+}
+
+static void display_usage(void) {
+    printf("Usage: ./analyzer <queue_size> <plugin1> <plugin2> ... <pluginN>\n");
+    printf("Arguments:\n");
+    printf("  queue_size  Maximum number of items in each plugin's queue\n");
+    printf("  plugin1..N  Names of plugins to load (without .so extension)\n");
+    printf("Available plugins:\n");
+    printf("  logger      - Logs all strings that pass through\n");
+    printf("  typewriter  - Simulates typewriter effect with delays\n");
+    printf("  uppercaser  - Converts strings to uppercase\n");
+    printf("  rotator     - Move every character to the right. Last character moves to the beginning.\n");
+    printf("  flipper     - Reverses the order of characters\n");
+    printf("  expander    - Expands each character with spaces\n");
+    printf("Example:\n");
+    printf("  ./analyzer 20 uppercaser rotator logger\n");
+    printf("  echo 'hello' | ./analyzer 20 uppercaser rotator logger\n");
+    printf("  echo '<END>' | ./analyzer 20 uppercaser rotator logger\n");
+}
+
