@@ -173,25 +173,33 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
 {
     if (NULL == plugin_handle || NULL == plugin_name) 
     {
-        return EXIT_FAILURE;
+        return 1;
     }
 
     char shared_object_file_name[MAX_FILE_NAME_LENGTH]; //TODO: maybe we should add 10 chars for extra space for "lib" prefix and ".so" suffix
     if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "lib" +".so\0"
     {
         fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
-        return EXIT_FAILURE;
+        return 1;
     }
 
-    strcpy(shared_object_file_name, plugin_name );
-    strcat(shared_object_file_name, ".so");
+    // strcpy(shared_object_file_name, plugin_name );
+    // strcat(shared_object_file_name, ".so");
+
+    int len = snprintf(shared_object_file_name, sizeof(shared_object_file_name), "output/%s.so", plugin_name);
+
+    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
+    {
+        fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
+        return 1;
+    }
 
     //store the copy of the plugin name
     plugin_handle->plugin_name = strdup(plugin_name);
     if(NULL == plugin_handle->plugin_name)
     {
         fprintf(stderr, "failed to allocate memory for plugin name: %s\n", plugin_name);
-        return EXIT_FAILURE;
+        return 1;
     }
 
     //load the shared object
@@ -203,7 +211,7 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
         plugin_handle->plugin_name = NULL;
         return EXIT_FAILURE;
     }
-    return EXIT_SUCCESS;
+    return 0;
 }
 
 // extract all the functions from the interface of the plugin
