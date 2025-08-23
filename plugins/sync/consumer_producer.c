@@ -155,10 +155,10 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
             queue->tail = (queue->tail + 1) % queue->capacity;
             queue->count++;
             
-            // Release lock before signaling
+            //Release lock before signaling
             pthread_mutex_unlock(&queue->queue_mutex);
             
-            // Signal that queue is not empty (wake up consumers)
+            //asignal that queue is not empty (wake up consumers)
             monitor_signal(&queue->not_empty_monitor);
             
             return NULL; // Success

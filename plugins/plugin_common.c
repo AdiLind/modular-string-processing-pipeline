@@ -242,10 +242,64 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 //     return NULL;
 // }
 
+
+//old version of plugin_fini
+
+// const char* plugin_fini(void) 
+// {
+
+//     if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
+
+//     // we mark it as finished to stop the consumer thread
+//     g_plugin_context.finished = 1;
+//     if (g_plugin_context.thread_created && !g_plugin_context.finished) 
+//     {
+//         // Send <END> to wake up the thread and make it exit
+//         const char* error = plugin_place_work("<END>");
+//         if (error != NULL) {
+//             log_error(&g_plugin_context, "Failed to send termination signal");
+//         }
+        
+//         // Wait for the thread to process the END signal
+//         plugin_wait_finished();
+//     }
+
+//     if (g_plugin_context.thread_created) 
+//     {
+//         if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
+//         {
+//             log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
+//         }
+//         g_plugin_context.thread_created = 0;
+
+//     }
+
+//     // destroy and free queue cleanup all the resources
+//     if (NULL != g_plugin_context.queue) 
+//     {
+//         consumer_producer_destroy(g_plugin_context.queue);
+//         free(g_plugin_context.queue);
+//         g_plugin_context.queue = NULL;
+//     }
+    
+//     // reset the context
+//     g_plugin_context.initialized = 0;
+//     g_plugin_context.finished = 0;
+//     g_plugin_context.name = NULL;
+//     g_plugin_context.process_function = NULL;
+//     g_plugin_context.next_place_work = NULL;
+//     pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+//     pthread_cond_destroy(&g_plugin_context.ready_cond);
+
+//     return NULL; 
+
+// }
+
 const char* plugin_fini(void) 
 {
-
-    if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
+    if (!g_plugin_context.initialized) { 
+        return "Plugin not initialized"; 
+    }
 
     // Mark as finished to stop the consumer thread
     g_plugin_context.finished = 1;
@@ -279,28 +333,29 @@ const char* plugin_fini(void)
             log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
         }
         g_plugin_context.thread_created = 0;
-
     }
 
-    // destroy and free queue cleanup all the resources
-    if (NULL != g_plugin_context.queue) 
-    {
+    // Clean up queue and its remaining contents
+    if (NULL != g_plugin_context.queue) {
         consumer_producer_destroy(g_plugin_context.queue);
         free(g_plugin_context.queue);
         g_plugin_context.queue = NULL;
     }
     
-    // reset the context
+    // Clean up synchronization primitives
+    //if (g_plugin_context.initialized) {
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        pthread_cond_destroy(&g_plugin_context.ready_cond);
+    //}
+    
+    // Reset context
     g_plugin_context.initialized = 0;
     g_plugin_context.finished = 0;
     g_plugin_context.name = NULL;
     g_plugin_context.process_function = NULL;
     g_plugin_context.next_place_work = NULL;
-    pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-    pthread_cond_destroy(&g_plugin_context.ready_cond);
 
-    return NULL; 
-
+    return NULL;
 }
 
 PLUGIN_EXPORT
@@ -311,7 +366,11 @@ const char* plugin_place_work(const char* str)
     // char* str_copy = strdup(str);
     // if (NULL == str_copy) { return "Failed to copy input string"; }
     const char* error = consumer_producer_put(g_plugin_context.queue, str);
+    // char* str_copy = strdup(str);
+    // if (NULL == str_copy) { return "Failed to copy input string"; }
+    const char* error = consumer_producer_put(g_plugin_context.queue, str);
     if (NULL != error) {
+        //free(str_copy);
         //free(str_copy);
         return error;
     }
