@@ -72,12 +72,22 @@ void* plugin_consumer_thread(void* arg)
     {
         // retrieve next item from queue, blocks if empty
         char* input_string = consumer_producer_get(plugin_context->queue);
+
+        if (plugin_context->finished) 
+        {
+            if (input_string) { free(input_string); }
+            break;
+        }
+
+
         if(NULL == input_string)
         {
             log_error(plugin_context, "Failed to retrieve string from queue");
             continue;
         }
 
+        /* test if here we have the problem */
+        /*
         //check if we received a shutdown signal
         if( 0 == strcmp(input_string, "<END>"))
         {
@@ -93,6 +103,18 @@ void* plugin_consumer_thread(void* arg)
             }
             free(input_string);  // we always need to free the original input
 
+            plugin_context->finished = 1;
+            consumer_producer_signal_finished(plugin_context->queue);
+            break;
+        }
+        */
+
+        // Handle END signal - DON'T transform it, just forward as-is
+        if(0 == strcmp(input_string, "<END>")) {
+            // Forward END signal without transformation
+            forward_to_next_plugin(plugin_context, input_string);
+            
+            free(input_string);
             plugin_context->finished = 1;
             consumer_producer_signal_finished(plugin_context->queue);
             break;
@@ -195,52 +217,110 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 //     return NULL;
 // }
 
+
+//old version of plugin_fini
+
+// const char* plugin_fini(void) 
+// {
+
+//     if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
+
+//     // we mark it as finished to stop the consumer thread
+//     g_plugin_context.finished = 1;
+//     if (g_plugin_context.thread_created && !g_plugin_context.finished) 
+//     {
+//         // Send <END> to wake up the thread and make it exit
+//         const char* error = plugin_place_work("<END>");
+//         if (error != NULL) {
+//             log_error(&g_plugin_context, "Failed to send termination signal");
+//         }
+        
+//         // Wait for the thread to process the END signal
+//         plugin_wait_finished();
+//     }
+
+//     if (g_plugin_context.thread_created) 
+//     {
+//         if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
+//         {
+//             log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
+//         }
+//         g_plugin_context.thread_created = 0;
+
+//     }
+
+//     // destroy and free queue cleanup all the resources
+//     if (NULL != g_plugin_context.queue) 
+//     {
+//         consumer_producer_destroy(g_plugin_context.queue);
+//         free(g_plugin_context.queue);
+//         g_plugin_context.queue = NULL;
+//     }
+    
+//     // reset the context
+//     g_plugin_context.initialized = 0;
+//     g_plugin_context.finished = 0;
+//     g_plugin_context.name = NULL;
+//     g_plugin_context.process_function = NULL;
+//     g_plugin_context.next_place_work = NULL;
+//     pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+//     pthread_cond_destroy(&g_plugin_context.ready_cond);
+
+//     return NULL; 
+
+// }
+
 const char* plugin_fini(void) 
 {
+    if (!g_plugin_context.initialized) { 
+        return "Plugin not initialized"; 
+    }
 
-    if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
+    // Mark as finished to stop the consumer thread
+    g_plugin_context.finished = 1;
+    
+    // If thread was created, signal it to wake up and join it
+    if (g_plugin_context.thread_created) {
+        // Send END signal if not already sent
+        if (g_plugin_context.queue) {
+            //signal the not_empty monitor to wake up any waiting consumers
+            monitor_signal(&g_plugin_context.queue->not_empty_monitor);
+            consumer_producer_signal_finished(g_plugin_context.queue);
 
-    if (g_plugin_context.thread_created && !g_plugin_context.finished) 
-    {
-        // Send <END> to wake up the thread and make it exit
-        const char* error = plugin_place_work("<END>");
-        if (error != NULL) {
-            log_error(&g_plugin_context, "Failed to send termination signal");
         }
         
-        // Wait for the thread to process the END signal
-        plugin_wait_finished();
-    }
-
-    if (g_plugin_context.thread_created) 
-    {
-        if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
-        {
-            log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
+        // Join the thread
+        int join_result = pthread_join(g_plugin_context.consumer_thread, NULL);
+        if (0 != join_result) {
+            // Thread didn't join - force cancel
+            pthread_cancel(g_plugin_context.consumer_thread);
+            pthread_join(g_plugin_context.consumer_thread, NULL);
+            log_error(&g_plugin_context, "Failed to join consumer thread");
         }
         g_plugin_context.thread_created = 0;
-
     }
 
-    // destroy and free queue cleanup all the resources
-    if (NULL != g_plugin_context.queue) 
-    {
+    // Clean up queue and its remaining contents
+    if (NULL != g_plugin_context.queue) {
         consumer_producer_destroy(g_plugin_context.queue);
         free(g_plugin_context.queue);
         g_plugin_context.queue = NULL;
     }
     
-    // reset the context
+    // Clean up synchronization primitives
+    //if (g_plugin_context.initialized) {
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        pthread_cond_destroy(&g_plugin_context.ready_cond);
+    //}
+    
+    // Reset context
     g_plugin_context.initialized = 0;
     g_plugin_context.finished = 0;
     g_plugin_context.name = NULL;
     g_plugin_context.process_function = NULL;
     g_plugin_context.next_place_work = NULL;
-    pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-    pthread_cond_destroy(&g_plugin_context.ready_cond);
 
-    return NULL; 
-
+    return NULL;
 }
 
 PLUGIN_EXPORT
@@ -248,11 +328,11 @@ const char* plugin_place_work(const char* str)
 {
     if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
     if (NULL == str) { return "Input string is NULL"; }
-    char* str_copy = strdup(str);
-    if (NULL == str_copy) { return "Failed to copy input string"; }
-    const char* error = consumer_producer_put(g_plugin_context.queue, str_copy);
+    // char* str_copy = strdup(str);
+    // if (NULL == str_copy) { return "Failed to copy input string"; }
+    const char* error = consumer_producer_put(g_plugin_context.queue, str);
     if (NULL != error) {
-        free(str_copy);
+        //free(str_copy);
         return error;
     }
 
