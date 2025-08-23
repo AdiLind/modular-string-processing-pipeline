@@ -454,7 +454,7 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
             if(NULL != fini_error)
             {
                 plugins_arr[fini_index].fini();
-                //fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", plugins_arr[fini_index].plugin_name, fini_error);
+                fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", plugins_arr[fini_index].plugin_name, fini_error);
             }
         }
 
