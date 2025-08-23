@@ -72,31 +72,66 @@ void* plugin_consumer_thread(void* arg)
     {
         // retrieve next item from queue, blocks if empty
         char* input_string = consumer_producer_get(plugin_context->queue);
-        if(NULL == input_string)
-        {
-            log_error(plugin_context, "Failed to retrieve string from queue");
-            continue;
-        }
+        // if(NULL == input_string)
+        // {
+        //     log_error(plugin_context, "Failed to retrieve string from queue");
+        //     continue;
+        // }
 
-        //check if we received a shutdown signal
-        if( 0 == strcmp(input_string, "<END>"))
-        {
-            //if we get <END> through this plugin's transformation 
-            const char* processed_signal = plugin_context->process_function(input_string); 
-
-            // forward the signal to the next plugin if attached
-            forward_to_next_plugin(plugin_context, processed_signal ? processed_signal : input_string); 
-
-            //free the allocated memory only if transformation allocated new memory
-            if (processed_signal != NULL && processed_signal != input_string) {
-                free((char*)processed_signal);
+        // Check if we should exit (finished flag set during shutdown)
+        if (plugin_context->finished) {
+            if (input_string) { 
+                free(input_string); 
             }
-            free(input_string);  // we always need to free the original input
-
-            plugin_context->finished = 1;
-            consumer_producer_signal_finished(plugin_context->queue);
             break;
         }
+
+        if (NULL == input_string) {
+            // Queue returned NULL - check if we're shutting down
+            if (plugin_context->finished) {
+                break;
+            }
+            continue; // Spurious wakeup, try again
+        }
+
+        // //check if we received a shutdown signal
+        // if( 0 == strcmp(input_string, "<END>"))
+        // {
+        //     //if we get <END> through this plugin's transformation 
+        //     const char* processed_signal = plugin_context->process_function(input_string); 
+
+        //     // forward the signal to the next plugin if attached
+        //     forward_to_next_plugin(plugin_context, processed_signal ? processed_signal : input_string); 
+
+        //     //free the allocated memory only if transformation allocated new memory
+        //     if (processed_signal != NULL && processed_signal != input_string) {
+        //         free((char*)processed_signal);
+        //     }
+        //     free(input_string);  // we always need to free the original input
+
+        //     plugin_context->finished = 1;
+        //     consumer_producer_signal_finished(plugin_context->queue);
+        //     break;
+        // }
+
+        if (0 == strcmp(input_string, "<END>")) {
+            
+            fprintf(stderr, "[DEBUG] %s: Processing END signal\n", plugin_context->name);
+
+            // Forward END signal without transformation
+            forward_to_next_plugin(plugin_context, input_string);
+            
+            // Mark as finished BEFORE signaling
+            plugin_context->finished = 1;
+            
+            // Signal that we're finished
+            consumer_producer_signal_finished(plugin_context->queue);
+            
+            // Clean up and exit
+            free(input_string);
+            break;
+        }
+
 
         // if got into this  line so the input string is not a <END>, so we need to process it
         const char* processed = plugin_context->process_function(input_string);
@@ -132,6 +167,8 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
     if (NULL != validation_error) {
         return validation_error;
     }
+
+    memset(&g_plugin_context, 0, sizeof(plugin_context_t));
     
     //TODO: testing the neccessary of those validations - should move to the validate_init_params function
     if (pthread_mutex_init(&g_plugin_context.ready_mutex, NULL) != 0) {
@@ -150,17 +187,24 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
     g_plugin_context.next_place_work = NULL;
     g_plugin_context.finished = 0;
     g_plugin_context.thread_created = 0;
+    g_plugin_context.initialized = 0;
+
 
     //init and allocate queue
     g_plugin_context.queue = (consumer_producer_t*)malloc(sizeof(consumer_producer_t));
     if (NULL == g_plugin_context.queue) {
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        pthread_cond_destroy(&g_plugin_context.ready_cond);
         return "Failed to allocate memory for queue structure";
     }
 
+    memset(g_plugin_context.queue, 0, sizeof(consumer_producer_t));
     error = consumer_producer_init(g_plugin_context.queue, queue_size);
     if (NULL != error) {
         free(g_plugin_context.queue);
         g_plugin_context.queue = NULL;
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        pthread_cond_destroy(&g_plugin_context.ready_cond);
         return error;
     }
     
@@ -170,21 +214,24 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
         consumer_producer_destroy(g_plugin_context.queue);
         free(g_plugin_context.queue);
         g_plugin_context.queue = NULL;
+        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+        pthread_cond_destroy(&g_plugin_context.ready_cond);
         return "Failed occour when creating consumer thread";
     }
+
+    g_plugin_context.thread_created = 1;
 
     // waiting for the thread to be ready
     pthread_mutex_lock(&g_plugin_context.ready_mutex);
 
-    while (!g_plugin_context.thread_ready) {
+    while (!g_plugin_context.thread_ready)
+    {
         pthread_cond_wait(&g_plugin_context.ready_cond, &g_plugin_context.ready_mutex);
     }
 
     pthread_mutex_unlock(&g_plugin_context.ready_mutex);
 
     g_plugin_context.initialized = 1;
-    g_plugin_context.thread_created = 1;
-
 
     return NULL;
 }
@@ -200,22 +247,35 @@ const char* plugin_fini(void)
 
     if (!g_plugin_context.initialized){ return "Plugin not initialized"; }
 
-    if (g_plugin_context.thread_created && !g_plugin_context.finished) 
+    // Mark as finished to stop the consumer thread
+    g_plugin_context.finished = 1;
+
+    //wakeup all the waiting threads
+    if(NULL != g_plugin_context.queue) 
     {
-        // Send <END> to wake up the thread and make it exit
-        const char* error = plugin_place_work("<END>");
-        if (error != NULL) {
-            log_error(&g_plugin_context, "Failed to send termination signal");
-        }
-        
-        // Wait for the thread to process the END signal
-        plugin_wait_finished();
+        monitor_signal(&g_plugin_context.queue->not_empty_monitor);
     }
 
+    // if (g_plugin_context.thread_created && !g_plugin_context.finished) 
+    // {
+    //     // Send <END> to wake up the thread and make it exit
+    //     const char* error = plugin_place_work("<END>");
+    //     if (error != NULL) {
+    //         log_error(&g_plugin_context, "Failed to send termination signal");
+    //     }
+        
+    //     // Wait for the thread to process the END signal
+    //     plugin_wait_finished();
+    // }
+
+    //wait for the consumer thread to finish
     if (g_plugin_context.thread_created) 
     {
-        if( 0 != pthread_join(g_plugin_context.consumer_thread, NULL))
+        int join_result = pthread_join(g_plugin_context.consumer_thread, NULL);
+        if( 0 != join_result)
         {
+            pthread_cancel(g_plugin_context.consumer_thread);
+            pthread_join(g_plugin_context.consumer_thread, NULL);
             log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
         }
         g_plugin_context.thread_created = 0;
@@ -248,11 +308,11 @@ const char* plugin_place_work(const char* str)
 {
     if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
     if (NULL == str) { return "Input string is NULL"; }
-    char* str_copy = strdup(str);
-    if (NULL == str_copy) { return "Failed to copy input string"; }
-    const char* error = consumer_producer_put(g_plugin_context.queue, str_copy);
+    // char* str_copy = strdup(str);
+    // if (NULL == str_copy) { return "Failed to copy input string"; }
+    const char* error = consumer_producer_put(g_plugin_context.queue, str);
     if (NULL != error) {
-        free(str_copy);
+        //free(str_copy);
         return error;
     }
 
@@ -277,6 +337,9 @@ const char* plugin_wait_finished(void)
 
     if(!g_plugin_context.initialized) { return "Plugin not initialized"; }
     if(NULL == g_plugin_context.queue) { return "Queue not initialized"; }
+
+    fprintf(stderr, "[DEBUG] %s: Waiting for finished signal\n", g_plugin_context.name);
+
     
     //wait until we grt the finish signal from the queue
     int wait_result = consumer_producer_wait_finished(g_plugin_context.queue);
@@ -304,9 +367,9 @@ static const char* validate_init_params(const char* (*process_func)(const char*)
         return "Invalid queue size cannot be zero or negative";
     }
     
-    if (g_plugin_context.initialized) {
-        return "Plugin already initialized";
-    }
+    // if (g_plugin_context.initialized) {
+    //     return "Plugin already initialized";
+    // }
     
     return NULL; 
 }

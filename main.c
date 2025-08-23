@@ -365,10 +365,11 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
 {
     if(NULL == first_plugin_in_chain)
     {
-        return EXIT_FAILURE;
+        return 1;
     }
 
     char input_line_buffer[Max_line_length];
+    int end_signal_received = 0;
 
 
     while(NULL != fgets(input_line_buffer, sizeof(input_line_buffer), stdin) )
@@ -385,18 +386,28 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
         if(NULL != place_work_error)
         {
             fprintf(stderr, "Error: Failed to place work to plugin %s: %s\n", first_plugin_in_chain->plugin_name, place_work_error);
-            return EXIT_FAILURE;
+            return 1;
         }
 
         //check for EOF
         if( 0 == strcmp(input_line_buffer, "<END>") )
         {
+            end_signal_received = 1;
             break;
         }
     }
 
+        if (!end_signal_received) {
+        printf("EOF reached, sending <END> signal...\n");
+        const char* place_work_error = first_plugin_in_chain->place_work("<END>");
+        if (NULL != place_work_error) 
+        {
+            fprintf(stderr, "Warning: Failed to send <END> signal: %s\n", place_work_error);
+        }
+    }
 
-    return EXIT_SUCCESS;
+
+    return 0;
 }
 
 static void free_plugin_resources(plugin_handle_t* plugin_handle)
@@ -434,10 +445,15 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
         //TODO: are we sure we need to wait for all of them? what if one of them failed to initialize? or get into deadlock? חס וחלילה
         if(NULL != plugins_arr[wait_index].wait_finished)
         {
+            printf("Waiting for plugin %s to finish...\n", 
+                   plugins_arr[wait_index].plugin_name ? plugins_arr[wait_index].plugin_name : "Unknown");
+
             const char* wait_error = plugins_arr[wait_index].wait_finished();
             if(NULL != wait_error)
             {
-                plugins_arr[wait_index].wait_finished();
+                fprintf(stderr, "Warning: plugin_wait_finished returned error for plugin %s: %s\n", 
+                        plugins_arr[wait_index].plugin_name, wait_error);
+                plugins_arr[wait_index].wait_finished(); // try again מה כבר יקרה YOLO
                 //fprintf(stderr, "Warning: plugin_wait_finished returned error for plugin %s: %s\n", plugins_arr[wait_index].plugin_name, wait_error);
             }
         }
@@ -453,9 +469,9 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
             const char* fini_error = plugins_arr[fini_index].fini();
             if(NULL != fini_error)
             {
-                plugins_arr[fini_index].fini();
-                //fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", plugins_arr[fini_index].plugin_name, fini_error);
-            }
+                //plugins_arr[fini_index].fini();
+                fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", 
+                        plugins_arr[fini_index].plugin_name, fini_error);            }
         }
 
         //free all resources allocated for this plugin

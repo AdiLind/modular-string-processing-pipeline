@@ -20,6 +20,8 @@ const char* consumer_producer_init(consumer_producer_t* queue, int capacity)
         return "Invalid capacity";
     }
 
+    memset(queue, 0, sizeof(consumer_producer_t));
+
     // initialize the queue
     queue->capacity = capacity;
     queue->count = 0;
@@ -72,6 +74,11 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
     {
         return;
     }
+
+    //TODO:check if this is the right approach -  Signal all waiting threads before cleanup
+    monitor_signal(&queue->not_full_monitor);
+    monitor_signal(&queue->not_empty_monitor);
+    monitor_signal(&queue->finished_monitor);
 
     if(queue->mutex_initialized) //lock the mutex before destroying
     {
@@ -166,7 +173,7 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
             return "Failed to wait for not_full condition";
         }
         
-        // Condition changed - retry the operation
+        //loop and try again
     }
 }
 
@@ -349,9 +356,10 @@ void consumer_producer_signal_finished(consumer_producer_t* queue) {
         //printf("DEBUG: queue is NULL!\n");
         return;
     }
-    //printf("DEBUG: calling monitor_signal\n");
+    printf("DEBUG: calling monitor_signal\n");
+    fprintf(stderr, "[DEBUG] Signaling finished monitor\n");
     monitor_signal(&queue->finished_monitor);
-    //printf("DEBUG: monitor_signal completed\n");
+    printf("DEBUG: monitor_signal completed\n");
 }
 
 int consumer_producer_wait_finished(consumer_producer_t* queue) {
