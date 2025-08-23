@@ -114,7 +114,7 @@ void* plugin_consumer_thread(void* arg)
 
         if (0 == strcmp(input_string, "<END>")) {
             
-            fprintf(stderr, "[DEBUG] %s: Processing END signal\n", plugin_context->name);
+            //fprintf(stderr, "[DEBUG] %s: Processing END signal\n", plugin_context->name);
 
             // Forward END signal without transformation
             forward_to_next_plugin(plugin_context, input_string);

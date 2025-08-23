@@ -13,7 +13,11 @@ static const char* flipper_transform(const char* input_to_flip)
     int input_len = strlen(input_to_flip);
     //handle empty string case, return empty string as well
     if (0 == input_len) {
-        return strdup(""); 
+        char* result = (char*)malloc(1);
+        if (result) {
+            result[0] = '\0';
+        }
+        return result; 
     }
 
     char* after_flipping_result = (char*)malloc(input_len + 1);

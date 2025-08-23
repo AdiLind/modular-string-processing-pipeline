@@ -11,7 +11,7 @@ static const char* logger_transform(const char* input_to_log)
         return NULL;
     }
     // Print to stdout with [logger] prefix
-    fprintf(stdout, "[logger] %s", input_to_log);
+    fprintf(stdout, "[logger] %s\n", input_to_log);
     fflush(stdout);
     
     // Return a copy of the string for the next plugin

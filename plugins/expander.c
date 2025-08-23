@@ -12,7 +12,11 @@ static const char* expander_transform(const char* input_to_expand)
     int input_len = strlen(input_to_expand);
     //handle empty string case - return empty string
     if (0 == input_len) {
-        return strdup(""); 
+        char* result = (char*)malloc(1);
+        if (result) {
+            result[0] = '\0';
+        }
+        return result; 
     }
 
     

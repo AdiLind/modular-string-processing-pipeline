@@ -83,7 +83,7 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "Error: Invalid queue size argument.\n");
         display_usage_help();
-        return EXIT_FAILURE;
+        return 1;
     }
 
     int total_num_of_plugins = argc - 2;
@@ -124,7 +124,7 @@ int main(int argc, char* argv[])
     cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
     //step 8 - clean up all resources allocated for plugins and the mass we allocated for them
     //step 9 - print exit 
-    printf("Pipeline shutdown complete");
+    printf("Pipeline shutdown complete\n");
     return 0; 
 }
 
@@ -137,12 +137,12 @@ static int parse_queue_size_arg(const char* argument_string)
 {
     if(NULL == argument_string) 
     {
-        return EXIT_FAILURE;
+        return -1;
     }
 
     if(argument_string[0] == '\0') 
     {
-        return EXIT_FAILURE;
+        return -1;
     }
 
     long parse_result = 0;
@@ -153,7 +153,7 @@ static int parse_queue_size_arg(const char* argument_string)
         char current_char = argument_string[i];
         if(current_char < '0' || current_char > '9') 
         {
-            return EXIT_FAILURE;
+            return -1;
         }
         int digit = current_char - '0';
         parse_result = parse_result * 10 + digit;
@@ -163,7 +163,7 @@ static int parse_queue_size_arg(const char* argument_string)
     //validate range
     if(parse_result <= 0 || parse_result > 1000000) 
     {
-        return EXIT_FAILURE;
+        return -1;
     }
 
     return (int)parse_result;
@@ -445,9 +445,6 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
         //TODO: are we sure we need to wait for all of them? what if one of them failed to initialize? or get into deadlock? חס וחלילה
         if(NULL != plugins_arr[wait_index].wait_finished)
         {
-            printf("Waiting for plugin %s to finish...\n", 
-                   plugins_arr[wait_index].plugin_name ? plugins_arr[wait_index].plugin_name : "Unknown");
-
             const char* wait_error = plugins_arr[wait_index].wait_finished();
             if(NULL != wait_error)
             {

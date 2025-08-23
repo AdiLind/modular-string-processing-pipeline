@@ -31,7 +31,11 @@ static const char* typewriter_transform(const char* input_to_type)
     fflush(stdout);
 
     //move the input to the next plugin in the chain if exists
-    char* copy_of_input = strdup(input_to_type);
+    size_t len = strlen(input_to_type);
+    char* copy_of_input = (char*)malloc(len + 1);
+    if (copy_of_input) {
+        strcpy(copy_of_input, input_to_type);
+    }
     if (NULL == copy_of_input)
     {
         return NULL; //TODO: this is necessary ? should we return NULL or error message? how this error could occur?
