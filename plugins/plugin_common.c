@@ -78,20 +78,18 @@ void* plugin_consumer_thread(void* arg)
         //     continue;
         // }
 
-        // Check if we should exit (finished flag set during shutdown)
-        if (plugin_context->finished) {
-            if (input_string) { 
-                free(input_string); 
-            }
-            break;
-        }
-
         if (NULL == input_string) {
             // Queue returned NULL - check if we're shutting down
             if (plugin_context->finished) {
                 break;
             }
             continue; // Spurious wakeup, try again
+        }
+
+        // Check if we should exit (finished flag set during shutdown)
+        if (plugin_context->finished) {
+            free(input_string); 
+            break;
         }
 
         // //check if we received a shutdown signal
@@ -304,10 +302,11 @@ const char* plugin_fini(void)
     // Mark as finished to stop the consumer thread
     g_plugin_context.finished = 1;
 
-    //wakeup all the waiting threads
+    //wakeup all the waiting threads to process shutdown
     if(NULL != g_plugin_context.queue) 
     {
         monitor_signal(&g_plugin_context.queue->not_empty_monitor);
+        monitor_signal(&g_plugin_context.queue->not_full_monitor);
     }
 
     // if (g_plugin_context.thread_created && !g_plugin_context.finished) 
@@ -363,9 +362,6 @@ const char* plugin_place_work(const char* str)
 {
     if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
     if (NULL == str) { return "Input string is NULL"; }
-    // char* str_copy = strdup(str);
-    // if (NULL == str_copy) { return "Failed to copy input string"; }
-    const char* error = consumer_producer_put(g_plugin_context.queue, str);
     // char* str_copy = strdup(str);
     // if (NULL == str_copy) { return "Failed to copy input string"; }
     const char* error = consumer_producer_put(g_plugin_context.queue, str);

@@ -141,14 +141,14 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
     while (1) {
         pthread_mutex_lock(&queue->queue_mutex);
         
-        // Check condition while holding lock
         if (queue->count < queue->capacity) {
-            // Space available - perform operation
-            char* copy_of_item = strdup(item);
+            size_t len = strlen(item);
+            char* copy_of_item = (char*)malloc(len + 1);
             if (NULL == copy_of_item) {
                 pthread_mutex_unlock(&queue->queue_mutex);
                 return "Failed to copy item string";
             }
+            strcpy(copy_of_item, item);
             
             // Add item
             queue->items[queue->tail] = copy_of_item;
@@ -356,10 +356,7 @@ void consumer_producer_signal_finished(consumer_producer_t* queue) {
         //printf("DEBUG: queue is NULL!\n");
         return;
     }
-    printf("DEBUG: calling monitor_signal\n");
-    fprintf(stderr, "[DEBUG] Signaling finished monitor\n");
     monitor_signal(&queue->finished_monitor);
-    printf("DEBUG: monitor_signal completed\n");
 }
 
 int consumer_producer_wait_finished(consumer_producer_t* queue) {
