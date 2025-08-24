@@ -120,7 +120,14 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    //step 6 - graceful shutdown all the plugins - after processing is done or error
+    //step 6 - wait for all plugins to finish processing before cleanup
+    for(int plugin_index = 0; plugin_index < total_num_of_plugins; plugin_index++) {
+        if(loaded_plugins_arr[plugin_index].wait_finished) {
+            loaded_plugins_arr[plugin_index].wait_finished();
+        }
+    }
+
+    //step 7 - graceful shutdown all the plugins - after processing is done or error
     cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
     //step 8 - clean up all resources allocated for plugins and the mass we allocated for them
     //step 9 - print exit 
@@ -359,6 +366,10 @@ static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int 
         int next_index = current_index + 1;
         plugins_arr[current_index].attach(plugins_arr[next_index].place_work);
     }
+    
+    // Add small delay to ensure all plugin threads are fully synchronized
+    // This prevents race conditions when connecting repeated plugin instances
+    usleep(10000); // 10ms delay to allow thread synchronization
 }
 
 static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)

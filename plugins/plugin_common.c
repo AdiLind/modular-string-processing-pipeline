@@ -459,9 +459,9 @@ const char* plugin_place_work(const char* str)
         return "No plugin instances initialized";
     }
     
-    // use round-robin to select which instance gets this work
-    plugin_context_t* current_plugin_context = plugin_instances_array[next_place_work_instance_index];
-    next_place_work_instance_index = (next_place_work_instance_index + 1) % total_plugin_instances;
+    // For pipeline plugins, each .so should only handle one instance at a time
+    // Use the most recent instance (the one that was attached)
+    plugin_context_t* current_plugin_context = plugin_instances_array[total_plugin_instances - 1];
     
     pthread_mutex_unlock(&plugin_instances_mutex);
     
