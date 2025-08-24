@@ -35,13 +35,19 @@ typedef struct {
     plugin_get_name_func get_name;
 
     char* plugin_name;
-    void* dynamic_library_handle;  
+    void* dynamic_library_handle;
+    char* actual_so_file;  // Track the actual .so file path for cleanup
+    int instance_id;       // Track instance number for duplicate plugins
 } plugin_handle_t;
+
+// Global counter to track plugin instances
+static int global_plugin_instance_counter = 0;
 
 // *** Main Helper Function Declarations *** ///
 // declare now to use all of them in main skip lazy compilation problems
 static void display_usage_help(void); 
 static int parse_queue_size_arg(const char* argument_string);
+static int copy_file(const char* source, const char* destination);
 static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name);
 static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plugin_name);
 static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[]);
@@ -176,6 +182,41 @@ static int parse_queue_size_arg(const char* argument_string)
     return (int)parse_result;
 }
 
+// Helper function to copy a file
+static int copy_file(const char* source, const char* destination) {
+    if (!source || !destination) {
+        return -1;
+    }
+
+    FILE* src = fopen(source, "rb");
+    if (!src) {
+        fprintf(stderr, "Error: Cannot open source file %s\n", source);
+        return -1;
+    }
+
+    FILE* dst = fopen(destination, "wb");
+    if (!dst) {
+        fprintf(stderr, "Error: Cannot create destination file %s\n", destination);
+        fclose(src);
+        return -1;
+    }
+
+    char buffer[8192];
+    size_t bytes;
+    while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+        if (fwrite(buffer, 1, bytes, dst) != bytes) {
+            fprintf(stderr, "Error: Failed to write to %s\n", destination);
+            fclose(src);
+            fclose(dst);
+            return -1;
+        }
+    }
+
+    fclose(src);
+    fclose(dst);
+    return 0;
+}
+
 static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name) 
 {
     if (NULL == plugin_handle || NULL == plugin_name) 
@@ -183,25 +224,40 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
         return 1;
     }
 
-    char shared_object_file_name[MAX_FILE_NAME_LENGTH]; //TODO: maybe we should add 10 chars for extra space for "lib" prefix and ".so" suffix
+    char original_so_file[MAX_FILE_NAME_LENGTH];
+    char unique_so_file[MAX_FILE_NAME_LENGTH];
+    
     if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "lib" +".so\0"
     {
         fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
         return 1;
     }
 
-    // strcpy(shared_object_file_name, plugin_name );
-    // strcat(shared_object_file_name, ".so");
-
-    int len = snprintf(shared_object_file_name, sizeof(shared_object_file_name), "output/%s.so", plugin_name);
-
+    // Build original .so file path
+    int len = snprintf(original_so_file, sizeof(original_so_file), "output/%s.so", plugin_name);
     if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
     {
         fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
         return 1;
     }
 
-    //store the copy of the plugin name
+    // Create unique .so file path for this instance
+    global_plugin_instance_counter++;
+    len = snprintf(unique_so_file, sizeof(unique_so_file), "output/%s_instance_%d.so", 
+                   plugin_name, global_plugin_instance_counter);
+    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
+    {
+        fprintf(stderr, "Error: Unique plugin path too long: %s\n", plugin_name);
+        return 1;
+    }
+
+    // Copy the original .so file to create a unique instance
+    if (copy_file(original_so_file, unique_so_file) != 0) {
+        fprintf(stderr, "Error: Failed to create unique copy of plugin %s\n", plugin_name);
+        return 1;
+    }
+
+    //store the plugin info
     plugin_handle->plugin_name = strdup(plugin_name);
     if(NULL == plugin_handle->plugin_name)
     {
@@ -209,13 +265,26 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
         return 1;
     }
 
-    //load the shared object
-    plugin_handle->dynamic_library_handle = dlopen(shared_object_file_name, RTLD_NOW | RTLD_LOCAL);
-    if (NULL == plugin_handle->dynamic_library_handle)
+    plugin_handle->actual_so_file = strdup(unique_so_file);
+    if(NULL == plugin_handle->actual_so_file)
     {
-        fprintf(stderr, "Failed to load plugin %s: %s\n", plugin_name, dlerror());
+        fprintf(stderr, "failed to allocate memory for plugin file path: %s\n", unique_so_file);
         free(plugin_handle->plugin_name);
         plugin_handle->plugin_name = NULL;
+        return 1;
+    }
+
+    plugin_handle->instance_id = global_plugin_instance_counter;
+
+    //load the unique shared object
+    plugin_handle->dynamic_library_handle = dlopen(unique_so_file, RTLD_NOW | RTLD_LOCAL);
+    if (NULL == plugin_handle->dynamic_library_handle)
+    {
+        fprintf(stderr, "Failed to load plugin %s from %s: %s\n", plugin_name, unique_so_file, dlerror());
+        free(plugin_handle->plugin_name);
+        free(plugin_handle->actual_so_file);
+        plugin_handle->plugin_name = NULL;
+        plugin_handle->actual_so_file = NULL;
         return EXIT_FAILURE;
     }
     return 0;
@@ -435,12 +504,26 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle)
         plugin_handle->plugin_name = NULL;
     }
 
-
     if(NULL != plugin_handle->dynamic_library_handle)
     {
         dlclose(plugin_handle->dynamic_library_handle);
         plugin_handle->dynamic_library_handle = NULL;
     }
+
+    // Clean up temporary .so file and free the path
+    if(NULL != plugin_handle->actual_so_file)
+    {
+        // Remove the temporary .so file
+        if (unlink(plugin_handle->actual_so_file) != 0) {
+            fprintf(stderr, "Warning: Failed to remove temporary file %s\n", plugin_handle->actual_so_file);
+        }
+        
+        // Free the path string
+        free(plugin_handle->actual_so_file);
+        plugin_handle->actual_so_file = NULL;
+    }
+
+    plugin_handle->instance_id = 0;
 }
 
 static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_of_plugins)
