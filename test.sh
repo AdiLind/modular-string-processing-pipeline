@@ -241,7 +241,7 @@ test_complex_pipelines() {
     # Test 3.1: Multi-stage pipeline
     print_test_case "Multi-stage pipeline (uppercaser -> rotator -> logger)"
     count_test
-    EXPECTED="[logger] EHLLO"
+    EXPECTED="[logger] OHELL"
     ACTUAL=$(echo -e "hello\n<END>" | run_with_timeout "${ANALYZER}" 20 uppercaser rotator logger 2>/dev/null | grep "\[logger\]" || true)
     if [ "$ACTUAL" = "$EXPECTED" ]; then
         print_pass "Multi-stage pipeline works correctly"

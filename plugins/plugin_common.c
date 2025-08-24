@@ -7,9 +7,21 @@
 
 
 //create a global plugin context because each plugin has its own instance
-plugin_context_t g_plugin_context = { .name = NULL, .queue = NULL, .consumer_thread = 0,
-                                      .next_place_work = NULL, .process_function = NULL, 
-                                      .initialized = 0, .finished = 0, .thread_created = 0};
+// plugin_context_t g_plugin_context = { .name = NULL, .queue = NULL, .consumer_thread = 0,
+//                                       .next_place_work = NULL, .process_function = NULL, 
+//                                       .initialized = 0, .finished = 0, .thread_created = 0};
+
+// support multiple instances of same plugin type - dynamic allocation based on CLI args
+static plugin_context_t** plugin_instances_array = NULL;
+static int total_plugin_instances = 0;
+static int max_allowed_plugin_instances = 0;
+static pthread_mutex_t plugin_instances_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// track which context to use for each operation
+static int current_init_instance_index = 0;
+static int next_place_work_instance_index = 0;
+static int next_wait_instance_index = 0;
+static int next_fini_instance_index = 0;
 
 /***** Helper Function Declaration  ******/  
 //static void cleanup_plugin_resources(void);
@@ -17,6 +29,7 @@ plugin_context_t g_plugin_context = { .name = NULL, .queue = NULL, .consumer_thr
 static void forward_to_next_plugin(plugin_context_t* ctx, const char* str);
 static const char* validate_init_params(const char* (*process_func)(const char*), 
                                                       const char* name, int queue_size);
+static const char* ensure_plugin_instances_array_allocated(int max_instances);
 
 
 
@@ -166,70 +179,118 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
         return validation_error;
     }
 
-    memset(&g_plugin_context, 0, sizeof(plugin_context_t));
+    // OLD CODE - single context approach
+    // memset(&g_plugin_context, 0, sizeof(plugin_context_t));
+    // 
+    // //TODO: testing the neccessary of those validations - should move to the validate_init_params function
+    // if (pthread_mutex_init(&g_plugin_context.ready_mutex, NULL) != 0) {
+    //     return "Failed to initialize ready mutex";
+    // }
+    
+    // NEW CODE - multiple context support with dynamic allocation
+    pthread_mutex_lock(&plugin_instances_mutex);
+    
+    // first time initialization - allocate array based on CLI args count
+    if (NULL == plugin_instances_array) {
+        // we need to get max instances from somewhere - for now use a reasonable default
+        // this will be set by main() or we can get it from environment/config
+        max_allowed_plugin_instances = 50; // TODO: make this configurable from CLI
+        error = ensure_plugin_instances_array_allocated(max_allowed_plugin_instances);
+        if (NULL != error) {
+            pthread_mutex_unlock(&plugin_instances_mutex);
+            return error;
+        }
+    }
+    
+    if (total_plugin_instances >= max_allowed_plugin_instances) {
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return "Maximum plugin instances reached";
+    }
+    
+    // allocate new context for this instance
+    plugin_context_t* current_plugin_context = (plugin_context_t*)calloc(1, sizeof(plugin_context_t));
+    if (NULL == current_plugin_context) {
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return "Failed to allocate context";
+    }
     
     //TODO: testing the neccessary of those validations - should move to the validate_init_params function
-    if (pthread_mutex_init(&g_plugin_context.ready_mutex, NULL) != 0) {
+    if (pthread_mutex_init(&current_plugin_context->ready_mutex, NULL) != 0) {
+        free(current_plugin_context);
+        pthread_mutex_unlock(&plugin_instances_mutex);
         return "Failed to initialize ready mutex";
     }
     
-    if (pthread_cond_init(&g_plugin_context.ready_cond, NULL) != 0) {
-        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+    if (pthread_cond_init(&current_plugin_context->ready_cond, NULL) != 0) {
+        pthread_mutex_destroy(&current_plugin_context->ready_mutex);
+        free(current_plugin_context);
+        pthread_mutex_unlock(&plugin_instances_mutex);
         return "Failed to initialize ready condition";
     }
 
     //init context
-    g_plugin_context.thread_ready = 0;
-    g_plugin_context.name = name;
-    g_plugin_context.process_function = process_function;
-    g_plugin_context.next_place_work = NULL;
-    g_plugin_context.finished = 0;
-    g_plugin_context.thread_created = 0;
-    g_plugin_context.initialized = 0;
+    current_plugin_context->thread_ready = 0;
+    current_plugin_context->name = name;
+    current_plugin_context->process_function = process_function;
+    current_plugin_context->next_place_work = NULL;
+    current_plugin_context->finished = 0;
+    current_plugin_context->thread_created = 0;
+    current_plugin_context->initialized = 0;
 
 
     //init and allocate queue
-    g_plugin_context.queue = (consumer_producer_t*)malloc(sizeof(consumer_producer_t));
-    if (NULL == g_plugin_context.queue) {
-        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-        pthread_cond_destroy(&g_plugin_context.ready_cond);
+    current_plugin_context->queue = (consumer_producer_t*)malloc(sizeof(consumer_producer_t));
+    if (NULL == current_plugin_context->queue) {
+        pthread_mutex_destroy(&current_plugin_context->ready_mutex);
+        pthread_cond_destroy(&current_plugin_context->ready_cond);
+        free(current_plugin_context);
+        pthread_mutex_unlock(&plugin_instances_mutex);
         return "Failed to allocate memory for queue structure";
     }
 
-    memset(g_plugin_context.queue, 0, sizeof(consumer_producer_t));
-    error = consumer_producer_init(g_plugin_context.queue, queue_size);
+    memset(current_plugin_context->queue, 0, sizeof(consumer_producer_t));
+    error = consumer_producer_init(current_plugin_context->queue, queue_size);
     if (NULL != error) {
-        free(g_plugin_context.queue);
-        g_plugin_context.queue = NULL;
-        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-        pthread_cond_destroy(&g_plugin_context.ready_cond);
+        free(current_plugin_context->queue);
+        pthread_mutex_destroy(&current_plugin_context->ready_mutex);
+        pthread_cond_destroy(&current_plugin_context->ready_cond);
+        free(current_plugin_context);
+        pthread_mutex_unlock(&plugin_instances_mutex);
         return error;
     }
     
     //create the consumer thread
-    if(0 != pthread_create(&g_plugin_context.consumer_thread, NULL, plugin_consumer_thread, &g_plugin_context))
+    if(0 != pthread_create(&current_plugin_context->consumer_thread, NULL, plugin_consumer_thread, current_plugin_context))
     {
-        consumer_producer_destroy(g_plugin_context.queue);
-        free(g_plugin_context.queue);
-        g_plugin_context.queue = NULL;
-        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-        pthread_cond_destroy(&g_plugin_context.ready_cond);
+        consumer_producer_destroy(current_plugin_context->queue);
+        free(current_plugin_context->queue);
+        pthread_mutex_destroy(&current_plugin_context->ready_mutex);
+        pthread_cond_destroy(&current_plugin_context->ready_cond);
+        free(current_plugin_context);
+        pthread_mutex_unlock(&plugin_instances_mutex);
         return "Failed occour when creating consumer thread";
     }
 
-    g_plugin_context.thread_created = 1;
+    current_plugin_context->thread_created = 1;
 
     // waiting for the thread to be ready
-    pthread_mutex_lock(&g_plugin_context.ready_mutex);
+    pthread_mutex_lock(&current_plugin_context->ready_mutex);
 
-    while (!g_plugin_context.thread_ready)
+    while (!current_plugin_context->thread_ready)
     {
-        pthread_cond_wait(&g_plugin_context.ready_cond, &g_plugin_context.ready_mutex);
+        pthread_cond_wait(&current_plugin_context->ready_cond, &current_plugin_context->ready_mutex);
     }
 
-    pthread_mutex_unlock(&g_plugin_context.ready_mutex);
+    pthread_mutex_unlock(&current_plugin_context->ready_mutex);
 
-    g_plugin_context.initialized = 1;
+    current_plugin_context->initialized = 1;
+    
+    // store context and update index
+    plugin_instances_array[total_plugin_instances] = current_plugin_context;
+    current_init_instance_index = total_plugin_instances;
+    total_plugin_instances++;
+    
+    pthread_mutex_unlock(&plugin_instances_mutex);
 
     return NULL;
 }
@@ -295,64 +356,83 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 
 const char* plugin_fini(void) 
 {
-    if (!g_plugin_context.initialized) { 
-        return "Plugin not initialized"; 
+    // OLD CODE - single context
+    // if (!g_plugin_context.initialized) { 
+    //     return "Plugin not initialized"; 
+    // }
+
+    // NEW CODE - multiple contexts support
+    pthread_mutex_lock(&plugin_instances_mutex);
+    
+    if (next_fini_instance_index >= total_plugin_instances) {
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return "No more contexts to finalize";
+    }
+    
+    plugin_context_t* current_plugin_context = plugin_instances_array[next_fini_instance_index];
+    plugin_instances_array[next_fini_instance_index] = NULL;  // clear the reference
+    next_fini_instance_index++;
+    
+    pthread_mutex_unlock(&plugin_instances_mutex);
+    
+    if (!current_plugin_context->initialized) {
+        free(current_plugin_context);  // clean up uninitialized context
+        return NULL;  // not an error, just nothing to do
     }
 
     // Mark as finished to stop the consumer thread
-    g_plugin_context.finished = 1;
+    current_plugin_context->finished = 1;
 
     //wakeup all the waiting threads to process shutdown
-    if(NULL != g_plugin_context.queue) 
+    if(NULL != current_plugin_context->queue) 
     {
-        monitor_signal(&g_plugin_context.queue->not_empty_monitor);
-        monitor_signal(&g_plugin_context.queue->not_full_monitor);
+        monitor_signal(&current_plugin_context->queue->not_empty_monitor);
+        monitor_signal(&current_plugin_context->queue->not_full_monitor);
     }
 
-    // if (g_plugin_context.thread_created && !g_plugin_context.finished) 
-    // {
-    //     // Send <END> to wake up the thread and make it exit
-    //     const char* error = plugin_place_work("<END>");
-    //     if (error != NULL) {
-    //         log_error(&g_plugin_context, "Failed to send termination signal");
-    //     }
-        
-    //     // Wait for the thread to process the END signal
-    //     plugin_wait_finished();
-    // }
-
     //wait for the consumer thread to finish
-    if (g_plugin_context.thread_created) 
+    if (current_plugin_context->thread_created) 
     {
-        int join_result = pthread_join(g_plugin_context.consumer_thread, NULL);
+        int join_result = pthread_join(current_plugin_context->consumer_thread, NULL);
         if( 0 != join_result)
         {
-            pthread_cancel(g_plugin_context.consumer_thread);
-            pthread_join(g_plugin_context.consumer_thread, NULL);
-            log_error(&g_plugin_context, "Failed to join consumer thread during finalization");
+            pthread_cancel(current_plugin_context->consumer_thread);
+            pthread_join(current_plugin_context->consumer_thread, NULL);
+            log_error(current_plugin_context, "Failed to join consumer thread during finalization");
         }
-        g_plugin_context.thread_created = 0;
+        current_plugin_context->thread_created = 0;
     }
 
     // Clean up queue and its remaining contents
-    if (NULL != g_plugin_context.queue) {
-        consumer_producer_destroy(g_plugin_context.queue);
-        free(g_plugin_context.queue);
-        g_plugin_context.queue = NULL;
+    if (NULL != current_plugin_context->queue) {
+        consumer_producer_destroy(current_plugin_context->queue);
+        free(current_plugin_context->queue);
+        current_plugin_context->queue = NULL;
     }
     
     // Clean up synchronization primitives
-    //if (g_plugin_context.initialized) {
-        pthread_mutex_destroy(&g_plugin_context.ready_mutex);
-        pthread_cond_destroy(&g_plugin_context.ready_cond);
-    //}
+    pthread_mutex_destroy(&current_plugin_context->ready_mutex);
+    pthread_cond_destroy(&current_plugin_context->ready_cond);
     
-    // Reset context
-    g_plugin_context.initialized = 0;
-    g_plugin_context.finished = 0;
-    g_plugin_context.name = NULL;
-    g_plugin_context.process_function = NULL;
-    g_plugin_context.next_place_work = NULL;
+    // free the context itself
+    free(current_plugin_context);
+    
+    // reset indices when all contexts are finalized
+    pthread_mutex_lock(&plugin_instances_mutex);
+    if (next_fini_instance_index >= total_plugin_instances) {
+        // cleanup the instances array itself
+        if (NULL != plugin_instances_array) {
+            free(plugin_instances_array);
+            plugin_instances_array = NULL;
+        }
+        total_plugin_instances = 0;
+        max_allowed_plugin_instances = 0;
+        current_init_instance_index = 0;
+        next_place_work_instance_index = 0;
+        next_wait_instance_index = 0;
+        next_fini_instance_index = 0;
+    }
+    pthread_mutex_unlock(&plugin_instances_mutex);
 
     return NULL;
 }
@@ -360,14 +440,37 @@ const char* plugin_fini(void)
 PLUGIN_EXPORT
 const char* plugin_place_work(const char* str) 
 {
-    if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
+    // OLD CODE - single context
+    // if (!g_plugin_context.initialized) { return "Plugin not initialized"; }
+    // if (NULL == str) { return "Input string is NULL"; }
+    // const char* error = consumer_producer_put(g_plugin_context.queue, str);
+    // if (NULL != error) {
+    //     return error;
+    // }
+    // return NULL;
+    
+    // NEW CODE - multiple contexts support
     if (NULL == str) { return "Input string is NULL"; }
-    // char* str_copy = strdup(str);
-    // if (NULL == str_copy) { return "Failed to copy input string"; }
-    const char* error = consumer_producer_put(g_plugin_context.queue, str);
+    
+    pthread_mutex_lock(&plugin_instances_mutex);
+    
+    if (total_plugin_instances == 0) {
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return "No plugin instances initialized";
+    }
+    
+    // use round-robin to select which instance gets this work
+    plugin_context_t* current_plugin_context = plugin_instances_array[next_place_work_instance_index];
+    next_place_work_instance_index = (next_place_work_instance_index + 1) % total_plugin_instances;
+    
+    pthread_mutex_unlock(&plugin_instances_mutex);
+    
+    if (!current_plugin_context->initialized) {
+        return "Plugin context not initialized";
+    }
+    
+    const char* error = consumer_producer_put(current_plugin_context->queue, str);
     if (NULL != error) {
-        //free(str_copy);
-        //free(str_copy);
         return error;
     }
 
@@ -376,28 +479,75 @@ const char* plugin_place_work(const char* str)
 
 PLUGIN_EXPORT
 const char* plugin_get_name(void) {
-    return g_plugin_context.name ? g_plugin_context.name : "Unknown Plugin";
+    // OLD CODE - single context
+    // return g_plugin_context.name ? g_plugin_context.name : "Unknown Plugin";
+    
+    // NEW CODE - multiple contexts support
+    pthread_mutex_lock(&plugin_instances_mutex);
+    
+    if (total_plugin_instances > 0 && plugin_instances_array[0] != NULL) {
+        const char* plugin_name = plugin_instances_array[0]->name;
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return plugin_name ? plugin_name : "Unknown Plugin";
+    }
+    
+    pthread_mutex_unlock(&plugin_instances_mutex);
+    return "Unknown Plugin";
 }
 
 
 PLUGIN_EXPORT
 void plugin_attach(const char* (*next_place_work)(const char*))
 {
-    g_plugin_context.next_place_work = next_place_work;   
+    // OLD CODE - single context
+    // g_plugin_context.next_place_work = next_place_work;
+    
+    // NEW CODE - multiple contexts support
+    pthread_mutex_lock(&plugin_instances_mutex);
+    if (current_init_instance_index < total_plugin_instances) {
+        plugin_instances_array[current_init_instance_index]->next_place_work = next_place_work;
+    }
+    pthread_mutex_unlock(&plugin_instances_mutex);
 }
 
 PLUGIN_EXPORT
 const char* plugin_wait_finished(void) 
 {
-
-    if(!g_plugin_context.initialized) { return "Plugin not initialized"; }
-    if(NULL == g_plugin_context.queue) { return "Queue not initialized"; }
-
-    fprintf(stderr, "[DEBUG] %s: Waiting for finished signal\n", g_plugin_context.name);
-
+    // OLD CODE - single context
+    // if(!g_plugin_context.initialized) { return "Plugin not initialized"; }
+    // if(NULL == g_plugin_context.queue) { return "Queue not initialized"; }
+    // fprintf(stderr, "[DEBUG] %s: Waiting for finished signal\n", g_plugin_context.name);
+    // //wait until we grt the finish signal from the queue
+    // int wait_result = consumer_producer_wait_finished(g_plugin_context.queue);
+    // if (0 != wait_result) {
+    //     return "fail while waiting for finished condition";
+    // }
+    // return NULL;
+    
+    // NEW CODE - multiple contexts support
+    pthread_mutex_lock(&plugin_instances_mutex);
+    
+    if (next_wait_instance_index >= total_plugin_instances) {
+        pthread_mutex_unlock(&plugin_instances_mutex);
+        return "No more contexts to wait for";
+    }
+    
+    plugin_context_t* current_plugin_context = plugin_instances_array[next_wait_instance_index++];
+    pthread_mutex_unlock(&plugin_instances_mutex);
+    
+    if (!current_plugin_context->initialized) {
+        return "Plugin context not initialized";
+    }
+    
+    if (NULL == current_plugin_context->queue) {
+        return "Queue not initialized";
+    }
+    
+    fprintf(stderr, "[DEBUG] %s (instance %d): Waiting for finished signal\n", 
+            current_plugin_context->name, next_wait_instance_index - 1);
     
     //wait until we grt the finish signal from the queue
-    int wait_result = consumer_producer_wait_finished(g_plugin_context.queue);
+    int wait_result = consumer_producer_wait_finished(current_plugin_context->queue);
     if (0 != wait_result) {
         return "fail while waiting for finished condition";
     }
@@ -442,4 +592,17 @@ static void forward_to_next_plugin(plugin_context_t* curr_plugin, const char* st
             log_error(curr_plugin, error_handler);
         }
     }
+}
+
+static const char* ensure_plugin_instances_array_allocated(int max_instances) {
+    if (NULL != plugin_instances_array) {
+        return NULL; // already allocated
+    }
+    
+    plugin_instances_array = (plugin_context_t**)calloc(max_instances, sizeof(plugin_context_t*));
+    if (NULL == plugin_instances_array) {
+        return "Failed to allocate plugin instances array";
+    }
+    
+    return NULL;
 }
