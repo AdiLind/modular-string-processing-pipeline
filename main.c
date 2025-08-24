@@ -3,6 +3,13 @@
 * here we use dynamic loading to load plugins at runtime.
 * each plugin implements a specific string transformation and run on its own thread.
 * the main program load the plugins and connect them in a pipeline.
+*
+* IMPLEMENTATION APPROACH:
+* - NEW: Uses dlmopen(LM_ID_NEWLM, ...) for multiple plugin instances (instructor-approved)
+* - OLD: File-copy approach (commented out for rollback capability)
+*
+* The dlmopen approach loads each plugin instance into separate namespaces,
+* allowing independent global state without file duplication or memory waste.
 */
 #define _GNU_SOURCE
 #include <pthread.h>
@@ -36,7 +43,8 @@ typedef struct {
 
     char* plugin_name;
     void* dynamic_library_handle;
-    char* actual_so_file;  // Track the actual .so file path for cleanup
+    // OLD FILE-COPY APPROACH (commented out for rollback capability):
+    // char* actual_so_file;  // Track the actual .so file path for cleanup
     int instance_id;       // Track instance number for duplicate plugins
 } plugin_handle_t;
 
@@ -47,8 +55,9 @@ static int global_plugin_instance_counter = 0;
 // declare now to use all of them in main skip lazy compilation problems
 static void display_usage_help(void); 
 static int parse_queue_size_arg(const char* argument_string);
-static int copy_file(const char* source, const char* destination);
-static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name);
+// OLD FILE-COPY APPROACH (commented out for rollback capability):
+// static int copy_file_for_multiple_instances(const char* source, const char* destination);
+static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const char* plugin_name);
 static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plugin_name);
 static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[]);
 static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, int queue_size);
@@ -182,8 +191,12 @@ static int parse_queue_size_arg(const char* argument_string)
     return (int)parse_result;
 }
 
-// Helper function to copy a file
-static int copy_file(const char* source, const char* destination) {
+/* OLD FILE-COPY APPROACH (commented out for rollback capability)
+ * This approach was rejected by the instructor as it creates unnecessary file copies
+ * and wastes memory. The new dlmopen approach is more efficient and instructor-approved.
+ *
+// Helper function to copy a file for multiple plugin instances
+static int copy_file_for_multiple_instances(const char* source, const char* destination) {
     if (!source || !destination) {
         return -1;
     }
@@ -216,8 +229,11 @@ static int copy_file(const char* source, const char* destination) {
     fclose(dst);
     return 0;
 }
+*/
 
-static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name) 
+/* OLD FILE-COPY APPROACH (commented out for rollback capability)
+ * This approach created file copies for each plugin instance
+static int load_single_plugin_with_file_copy(plugin_handle_t* plugin_handle, const char* plugin_name) 
 {
     if (NULL == plugin_handle || NULL == plugin_name) 
     {
@@ -252,7 +268,7 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
     }
 
     // Copy the original .so file to create a unique instance
-    if (copy_file(original_so_file, unique_so_file) != 0) {
+    if (copy_file_for_multiple_instances(original_so_file, unique_so_file) != 0) {
         fprintf(stderr, "Error: Failed to create unique copy of plugin %s\n", plugin_name);
         return 1;
     }
@@ -287,6 +303,56 @@ static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin
         plugin_handle->actual_so_file = NULL;
         return EXIT_FAILURE;
     }
+    return 0;
+}
+*/
+
+// NEW DLMOPEN APPROACH - Instructor approved solution
+static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const char* plugin_name) 
+{
+    if (NULL == plugin_handle || NULL == plugin_name) 
+    {
+        return 1;
+    }
+
+    char so_file_path[MAX_FILE_NAME_LENGTH];
+    
+    if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "output/" + ".so\0"
+    {
+        fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
+        return 1;
+    }
+
+    // Build .so file path
+    int len = snprintf(so_file_path, sizeof(so_file_path), "output/%s.so", plugin_name);
+    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
+    {
+        fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
+        return 1;
+    }
+
+    //store the plugin info
+    plugin_handle->plugin_name = strdup(plugin_name);
+    if(NULL == plugin_handle->plugin_name)
+    {
+        fprintf(stderr, "failed to allocate memory for plugin name: %s\n", plugin_name);
+        return 1;
+    }
+
+    global_plugin_instance_counter++;
+    plugin_handle->instance_id = global_plugin_instance_counter;
+
+    // Use dlmopen to load each instance into a separate namespace
+    // This allows multiple instances of the same plugin to have separate global state
+    plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW);
+    if (NULL == plugin_handle->dynamic_library_handle)
+    {
+        fprintf(stderr, "Failed to load plugin %s from %s: %s\n", plugin_name, so_file_path, dlerror());
+        free(plugin_handle->plugin_name);
+        plugin_handle->plugin_name = NULL;
+        return 1;
+    }
+    
     return 0;
 }
 
@@ -367,7 +433,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
     int current_plugin_index;
     for(current_plugin_index= 0; current_plugin_index < num_of_plugins; current_plugin_index++)
     {
-        int single_plugin_load_result = load_single_plugin(&plugins_array[current_plugin_index], plugin_names[current_plugin_index]);
+        int single_plugin_load_result = load_single_plugin_with_dlmopen(&plugins_array[current_plugin_index], plugin_names[current_plugin_index]);
         if(0 != single_plugin_load_result)
         {
             fprintf(stderr, "Error: Failed to load plugin: %s\n", plugin_names[current_plugin_index]);
@@ -478,7 +544,7 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
     }
 
         if (!end_signal_received) {
-        printf("EOF reached, sending <END> signal...\n");
+        // printf("EOF reached, sending <END> signal...\n"); // Debug output - commented for clean submission
         const char* place_work_error = first_plugin_in_chain->place_work("<END>");
         if (NULL != place_work_error) 
         {
@@ -510,6 +576,8 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle)
         plugin_handle->dynamic_library_handle = NULL;
     }
 
+    /* OLD FILE-COPY APPROACH (commented out for rollback capability)
+     * No longer needed since dlmopen doesn't create temporary files
     // Clean up temporary .so file and free the path
     if(NULL != plugin_handle->actual_so_file)
     {
@@ -522,6 +590,7 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle)
         free(plugin_handle->actual_so_file);
         plugin_handle->actual_so_file = NULL;
     }
+    */
 
     plugin_handle->instance_id = 0;
 }
