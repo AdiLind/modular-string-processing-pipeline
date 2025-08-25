@@ -3,13 +3,6 @@
 * here we use dynamic loading to load plugins at runtime.
 * each plugin implements a specific string transformation and run on its own thread.
 * the main program load the plugins and connect them in a pipeline.
-*
-* IMPLEMENTATION APPROACH:
-* - NEW: Uses dlmopen(LM_ID_NEWLM, ...) for multiple plugin instances (instructor-approved)
-* - OLD: File-copy approach (commented out for rollback capability)
-*
-* The dlmopen approach loads each plugin instance into separate namespaces,
-* allowing independent global state without file duplication or memory waste.
 */
 #define _GNU_SOURCE
 #include <pthread.h>
@@ -43,21 +36,18 @@ typedef struct {
 
     char* plugin_name;
     void* dynamic_library_handle;
-    // OLD FILE-COPY APPROACH (commented out for rollback capability):
-    // char* actual_so_file;  // Track the actual .so file path for cleanup
-    int instance_id;       // Track instance number for duplicate plugins
+    int instance_id;       // we need this to separte contexts between same plugins instances
 } plugin_handle_t;
 
-// Global counter to track plugin instances
+
 static int global_plugin_instance_counter = 0;
 
-// *** Main Helper Function Declarations *** ///
-// declare now to use all of them in main skip lazy compilation problems
+// ####  Helper Func Declarations ### ///
+// we need to declare now to use all of them in main skip lazy compilation problems, trick we learn with pain and blood :)
 static void display_usage_help(void); 
 static int parse_queue_size_arg(const char* argument_string);
-// OLD FILE-COPY APPROACH (commented out for rollback capability):
-// static int copy_file_for_multiple_instances(const char* source, const char* destination);
 static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const char* plugin_name);
+//static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name);
 static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plugin_name);
 static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[]);
 static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, int queue_size);
@@ -67,25 +57,24 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle);
 static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_of_plugins);
 
 
-/// *** Main Function *** ///
-
+/// TO BE DELETED !!!! 
 ///TODO: hello Adi from the future, this is skeleton of main function with all the steps, you need to implement all of those functios
 /// dont forget to add those function declarations at the top of this file
 /* steps order from the file - 
-    //step 1 - parse command line arguments
-    //step 2 - load all plugins dynamically and export their functions
-    //step 3 - initialize all plugins - construct the pipeline
-    //step 4 - connect plugins in a pipeline chain
-    //step 5 - read input lines and process them through the pipeline - the main part of the program logic
-    //step 6 - graceful shutdown all the plugins - after processing is done or error
-    //step 8 - clean up all resources allocated for plugins and the mass we allocated for them
-    //step 9 - print exit 
+    // step 1- parse command line arguments
+    // step 2- load all plugins dynamically and export their functions
+    // step 3- initialize all plugins - construct the pipeline
+    // step 4- connect plugins in a pipeline chain 
+    //step 5- read input lines and process them through the pipeline - the main part of the program logic
+    // step 6- graceful shutdown all the plugins - after processing is done or error
+    // step 8- clean up all resources allocated for plugins and the mass we allocated for them
+    // step 9- print exit 
 */
 int main(int argc, char* argv[]) 
 {
     //step 1 - parse command line arguments
-    // echo <string_to_manipulate> | ./analayzer <queue_size> <plugin1> ...
-    // program name, queue size, plugin1,.... => min 3 args
+    // echo <string_to_manipulate> | ./output/analayzer <queue_size> <plugin1> ...
+    // program path+name, queue size, plugin1,.... => min 3 args
     if (argc < 3) 
     {
         fprintf(stderr, "Error: Not enough arguments.\n");
@@ -119,7 +108,7 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "Error: Failed occur while initializing plugins.\n");
         cleanup_all_plugins_in_range(loaded_plugins_arr, total_num_of_plugins);
-        return 2; // TODO: define error codes in a header file
+        return 2; // TODO: check again if this is should be 2 and make a clear define error codes in a header file
     }
 
     //step 4 - connect plugins in a pipeline chain
@@ -152,7 +141,6 @@ int main(int argc, char* argv[])
 
 
 
-
 // *** implementation helper functions ** /// 
 
 static int parse_queue_size_arg(const char* argument_string) 
@@ -169,7 +157,7 @@ static int parse_queue_size_arg(const char* argument_string)
 
     long parse_result = 0;
     int i = 0;
-    //parse each char
+    //parse each char until we reach the end 
     while(argument_string[i] != '\0' && i < MAX_FILE_NAME_LENGTH) 
     {
         char current_char = argument_string[i];
@@ -191,123 +179,11 @@ static int parse_queue_size_arg(const char* argument_string)
     return (int)parse_result;
 }
 
-/* OLD FILE-COPY APPROACH (commented out for rollback capability)
- * This approach was rejected by the instructor as it creates unnecessary file copies
- * and wastes memory. The new dlmopen approach is more efficient and instructor-approved.
- *
-// Helper function to copy a file for multiple plugin instances
-static int copy_file_for_multiple_instances(const char* source, const char* destination) {
-    if (!source || !destination) {
-        return -1;
-    }
 
-    FILE* src = fopen(source, "rb");
-    if (!src) {
-        fprintf(stderr, "Error: Cannot open source file %s\n", source);
-        return -1;
-    }
 
-    FILE* dst = fopen(destination, "wb");
-    if (!dst) {
-        fprintf(stderr, "Error: Cannot create destination file %s\n", destination);
-        fclose(src);
-        return -1;
-    }
 
-    char buffer[8192];
-    size_t bytes;
-    while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
-        if (fwrite(buffer, 1, bytes, dst) != bytes) {
-            fprintf(stderr, "Error: Failed to write to %s\n", destination);
-            fclose(src);
-            fclose(dst);
-            return -1;
-        }
-    }
-
-    fclose(src);
-    fclose(dst);
-    return 0;
-}
-*/
-
-/* OLD FILE-COPY APPROACH (commented out for rollback capability)
- * This approach created file copies for each plugin instance
-static int load_single_plugin_with_file_copy(plugin_handle_t* plugin_handle, const char* plugin_name) 
-{
-    if (NULL == plugin_handle || NULL == plugin_name) 
-    {
-        return 1;
-    }
-
-    char original_so_file[MAX_FILE_NAME_LENGTH];
-    char unique_so_file[MAX_FILE_NAME_LENGTH];
-    
-    if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "lib" +".so\0"
-    {
-        fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
-        return 1;
-    }
-
-    // Build original .so file path
-    int len = snprintf(original_so_file, sizeof(original_so_file), "output/%s.so", plugin_name);
-    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
-    {
-        fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
-        return 1;
-    }
-
-    // Create unique .so file path for this instance
-    global_plugin_instance_counter++;
-    len = snprintf(unique_so_file, sizeof(unique_so_file), "output/%s_instance_%d.so", 
-                   plugin_name, global_plugin_instance_counter);
-    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
-    {
-        fprintf(stderr, "Error: Unique plugin path too long: %s\n", plugin_name);
-        return 1;
-    }
-
-    // Copy the original .so file to create a unique instance
-    if (copy_file_for_multiple_instances(original_so_file, unique_so_file) != 0) {
-        fprintf(stderr, "Error: Failed to create unique copy of plugin %s\n", plugin_name);
-        return 1;
-    }
-
-    //store the plugin info
-    plugin_handle->plugin_name = strdup(plugin_name);
-    if(NULL == plugin_handle->plugin_name)
-    {
-        fprintf(stderr, "failed to allocate memory for plugin name: %s\n", plugin_name);
-        return 1;
-    }
-
-    plugin_handle->actual_so_file = strdup(unique_so_file);
-    if(NULL == plugin_handle->actual_so_file)
-    {
-        fprintf(stderr, "failed to allocate memory for plugin file path: %s\n", unique_so_file);
-        free(plugin_handle->plugin_name);
-        plugin_handle->plugin_name = NULL;
-        return 1;
-    }
-
-    plugin_handle->instance_id = global_plugin_instance_counter;
-
-    //load the unique shared object
-    plugin_handle->dynamic_library_handle = dlopen(unique_so_file, RTLD_NOW | RTLD_LOCAL);
-    if (NULL == plugin_handle->dynamic_library_handle)
-    {
-        fprintf(stderr, "Failed to load plugin %s from %s: %s\n", plugin_name, unique_so_file, dlerror());
-        free(plugin_handle->plugin_name);
-        free(plugin_handle->actual_so_file);
-        plugin_handle->plugin_name = NULL;
-        plugin_handle->actual_so_file = NULL;
-        return EXIT_FAILURE;
-    }
-    return 0;
-}
-*/
-
-// NEW DLMOPEN APPROACH - Instructor approved solution
+// in order to load multiple instances of the same plugin type more than once I choose to use dlmopen instead of dlopen
+// I read in the piazza that this is valid approach to use this method. I worked on this feature more than 2 days so please dont reduce points on this func :) 
 static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const char* plugin_name) 
 {
     if (NULL == plugin_handle || NULL == plugin_name) 
@@ -317,17 +193,17 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
 
     char so_file_path[MAX_FILE_NAME_LENGTH];
     
-    if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "output/" + ".so\0"
+    if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) //"output/" + ".so\0"
     {
         fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
         return 1;
     }
 
-    // Build .so file path
+    //make the .so file path
     int len = snprintf(so_file_path, sizeof(so_file_path), "output/%s.so", plugin_name);
     if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
     {
-        fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
+        fprintf(stderr, "ERROR: Plugin path too long: %s\n", plugin_name);
         return 1;
     }
 
@@ -342,12 +218,12 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
     global_plugin_instance_counter++;
     plugin_handle->instance_id = global_plugin_instance_counter;
 
-    // Use dlmopen to load each instance into a separate namespace
-    // This allows multiple instances of the same plugin to have separate global state
-    plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW);
+    // we use dlmopen to load each instance into a separate namespace
+    // this func allows us to use multiple instances of the same plugin to have separate global state
+    plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW); // TODO: check if we need RTLD_NOW | RTLD_LOCAL instead
     if (NULL == plugin_handle->dynamic_library_handle)
     {
-        fprintf(stderr, "Failed to load plugin %s from %s: %s\n", plugin_name, so_file_path, dlerror());
+        fprintf(stderr, "fail occur while loading plugin %s from %s: %s\n", plugin_name, so_file_path, dlerror());
         free(plugin_handle->plugin_name);
         plugin_handle->plugin_name = NULL;
         return 1;
@@ -356,7 +232,7 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
     return 0;
 }
 
-// extract all the functions from the interface of the plugin
+// now we will extract all the functions from the interface of the plugin
 static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plugin_name)
 {
     if(NULL == plugin_handle || NULL == plugin_name || NULL == plugin_handle->dynamic_library_handle)
@@ -364,7 +240,7 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
         return EXIT_FAILURE;
     }
 
-    //extract plugin_init
+    //plugin_init
     plugin_handle->init = (plugin_init_func)dlsym(plugin_handle->dynamic_library_handle, "plugin_init");
     if (NULL == plugin_handle->init)
     {
@@ -372,7 +248,7 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
         return EXIT_FAILURE;
     }
 
-    //extract plugin_get_name
+    //plugin_get_name
     plugin_handle->get_name = (plugin_get_name_func)dlsym(plugin_handle->dynamic_library_handle, "plugin_get_name");
     if (NULL == plugin_handle->get_name) {
         fprintf(stderr, "Failed to find plugin_get_name in %s: %s\n", plugin_name, dlerror());
@@ -380,7 +256,7 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
     }
 
 
-    //extract plugin_attach
+    //plugin_attach
     plugin_handle->attach = (plugin_attach_func)dlsym(plugin_handle->dynamic_library_handle, "plugin_attach");
     if (NULL == plugin_handle->attach) {
         fprintf(stderr, "Failed to find plugin_attach in %s: %s\n", plugin_name, dlerror());
@@ -395,7 +271,7 @@ static int extract_plugin_funcs(plugin_handle_t* plugin_handle, const char* plug
         return EXIT_FAILURE;    
     }
     
-    //extract plugin_wait_finished
+    //plugin_wait_finished
     plugin_handle->wait_finished = (plugin_wait_finished_func)dlsym(plugin_handle->dynamic_library_handle, "plugin_wait_finished");
     if (NULL == plugin_handle->wait_finished) {
         fprintf(stderr, "Failed to find plugin_wait_finished in %s: %s\n", plugin_name, dlerror());
@@ -425,7 +301,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
     plugin_handle_t* plugins_array = (plugin_handle_t*)calloc(num_of_plugins, sizeof(plugin_handle_t));
     if(NULL == plugins_array)
     {
-        fprintf(stderr, "Error: Failed to allocate memory for plugins array.\n");
+        fprintf(stderr, "Failed to allocate memory for plugins array.\n");
         return NULL;
     }
 
@@ -439,12 +315,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
             fprintf(stderr, "Error: Failed to load plugin: %s\n", plugin_names[current_plugin_index]);
             //cleanup all the plugins we have loaded so far
             cleanup_all_plugins_in_range(plugins_array, current_plugin_index);
-            /*
-            for(int j = 0; j < current_plugin_index; j++)
-            {
-                free_plugin_resources(&plugins_array[j]);
-            }
-            */
+
             free(plugins_array);
             return NULL;
         }
@@ -455,7 +326,7 @@ static plugin_handle_t* load_all_plugins(int num_of_plugins, char* plugin_names[
         {
             fprintf(stderr, "Error: Failed to extract functions from plugin: %s\n", plugin_names[current_plugin_index]);
             //cleanup all the plugins we have loaded so far
-            cleanup_all_plugins_in_range(plugins_array, current_plugin_index + 1); //include the current one
+            cleanup_all_plugins_in_range(plugins_array, current_plugin_index + 1); //include this one
             free(plugins_array);
             return NULL;
         }
@@ -468,7 +339,7 @@ static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, in
 {
     if(NULL == plugins_arr || num_of_plugins <= 0 || queue_size <= 0)
     {
-        return EXIT_FAILURE;
+        return 1;
     }
     
 
@@ -479,13 +350,14 @@ static int init_all_plugins(plugin_handle_t* plugins_arr, int num_of_plugins, in
         if(NULL != init_error)
         {
             fprintf(stderr, "Error: plugin_init function is NULL for plugin%s: %s\n", plugins_arr[current_plugin_index].plugin_name, init_error);
+            //clean with safe rollback
             cleanup_all_plugins_in_range(plugins_arr, current_plugin_index);
-            return EXIT_FAILURE;
+            return 1;
         }
 
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 
 static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int num_of_plugins)
@@ -503,7 +375,7 @@ static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int 
     }
     
     // Add small delay to ensure all plugin threads are fully synchronized
-    // This prevents race conditions when connecting repeated plugin instances
+    //TODO : check if this is really needed or we can remove it - this is valid with the instructions?
     usleep(10000); // 10ms delay to allow thread synchronization
 }
 
@@ -520,11 +392,11 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
 
     while(NULL != fgets(input_line_buffer, sizeof(input_line_buffer), stdin) )
     {
-        //remove '\n' characters if present the plugins assume they dont accepts new line characters
+        //remove '\n'
         size_t line_len = strlen(input_line_buffer);
         if(line_len > 0 && input_line_buffer[line_len - 1] == '\n')
         {
-            input_line_buffer[line_len - 1] = '\0'; //remove the new line
+            input_line_buffer[line_len - 1] = '\0'; //insert null instead of \n
         }
 
         //send to the first plugin in the chain
@@ -535,7 +407,7 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
             return 1;
         }
 
-        //check for EOF
+        //check for EOF - if we dont get <END> we will not halt
         if( 0 == strcmp(input_line_buffer, "<END>") )
         {
             end_signal_received = 1;
@@ -543,14 +415,19 @@ static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)
         }
     }
 
-        if (!end_signal_received) {
+    // TODO: check in the piazza / the pdf instructor notes if we need to send <END> on EOF
+    // there is no clear instruction about it, friend said if its not had <END> its should hang, but it makes sense to me to do it
+    // for now i commented it out 
+
+
+        // if (!end_signal_received) {
         // printf("EOF reached, sending <END> signal...\n"); // Debug output - commented for clean submission
-        const char* place_work_error = first_plugin_in_chain->place_work("<END>");
-        if (NULL != place_work_error) 
-        {
-            fprintf(stderr, "Warning: Failed to send <END> signal: %s\n", place_work_error);
-        }
-    }
+        // const char* place_work_error = first_plugin_in_chain->place_work("<END>");
+        // if (NULL != place_work_error) 
+        // {
+        //     fprintf(stderr, "Warning: Failed to send <END> signal: %s\n", place_work_error);
+        // }
+    // }
 
 
     return 0;
@@ -576,21 +453,7 @@ static void free_plugin_resources(plugin_handle_t* plugin_handle)
         plugin_handle->dynamic_library_handle = NULL;
     }
 
-    /* OLD FILE-COPY APPROACH (commented out for rollback capability)
-     * No longer needed since dlmopen doesn't create temporary files
-    // Clean up temporary .so file and free the path
-    if(NULL != plugin_handle->actual_so_file)
-    {
-        // Remove the temporary .so file
-        if (unlink(plugin_handle->actual_so_file) != 0) {
-            fprintf(stderr, "Warning: Failed to remove temporary file %s\n", plugin_handle->actual_so_file);
-        }
-        
-        // Free the path string
-        free(plugin_handle->actual_so_file);
-        plugin_handle->actual_so_file = NULL;
-    }
-    */
+    
 
     plugin_handle->instance_id = 0;
 }
@@ -605,7 +468,7 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
     for(int wait_index = 0; wait_index < num_of_plugins; wait_index++)
     {
         //wait until all plugins will finish processing
-        //TODO: are we sure we need to wait for all of them? what if one of them failed to initialize? or get into deadlock? חס וחלילה
+        //TOCHECK: are we sure we need to wait for all of them? what if one of them failed to initialize? or get into deadlock? חס וחלילה
         if(NULL != plugins_arr[wait_index].wait_finished)
         {
             const char* wait_error = plugins_arr[wait_index].wait_finished();
@@ -631,7 +494,8 @@ static void cleanup_all_plugins_in_range(plugin_handle_t* plugins_arr, int num_o
             {
                 //plugins_arr[fini_index].fini();
                 fprintf(stderr, "Warning: plugin_fini returned error for plugin %s: %s\n", 
-                        plugins_arr[fini_index].plugin_name, fini_error);            }
+                        plugins_arr[fini_index].plugin_name, fini_error);        
+            }
         }
 
         //free all resources allocated for this plugin
@@ -659,3 +523,54 @@ static void display_usage_help(void) {
     printf("  echo '<END>' | ./analyzer 20 uppercaser rotator logger\n");
 }
 
+
+
+/* 
+* old version of load_single_plugin using dlopen - we changed to dlmopen to support multiple instances of the same plugin
+* kept it here for reference and in case we need to rollback (we also can reach it from git but im lazy :) )
+static int load_single_plugin(plugin_handle_t* plugin_handle, const char* plugin_name) 
+{
+    if (NULL == plugin_handle || NULL == plugin_name) 
+    {
+        return 1;
+    }
+
+    char shared_object_file_name[MAX_FILE_NAME_LENGTH]; //TODO: maybe we should add 10 chars for extra space for "lib" prefix and ".so" suffix
+    if(strlen(plugin_name) + 8 > MAX_FILE_NAME_LENGTH) // "lib" +".so\0"
+    {
+        fprintf(stderr, "Error: Plugin name too long: %s\n", plugin_name);
+        return 1;
+    }
+
+    // strcpy(shared_object_file_name, plugin_name );
+    // strcat(shared_object_file_name, ".so");
+
+    int len = snprintf(shared_object_file_name, sizeof(shared_object_file_name), "output/%s.so", plugin_name);
+
+    if(len >= MAX_FILE_NAME_LENGTH || len < 0) 
+    {
+        fprintf(stderr, "Error: Plugin path too long: %s\n", plugin_name);
+        return 1;
+    }
+
+    //store the copy of the plugin name
+    plugin_handle->plugin_name = strdup(plugin_name);
+    if(NULL == plugin_handle->plugin_name)
+    {
+        fprintf(stderr, "failed to allocate memory for plugin name: %s\n", plugin_name);
+        return 1;
+    }
+
+    //load the shared object
+    plugin_handle->dynamic_library_handle = dlopen(shared_object_file_name, RTLD_NOW | RTLD_LOCAL);
+    if (NULL == plugin_handle->dynamic_library_handle)
+    {
+        fprintf(stderr, "Failed to load plugin %s: %s\n", plugin_name, dlerror());
+        free(plugin_handle->plugin_name);
+        plugin_handle->plugin_name = NULL;
+        return EXIT_FAILURE;
+    }
+    return 0;
+}
+
+*/
