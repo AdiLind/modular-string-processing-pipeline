@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
 
 //This logger plugin simply logs the strings it receives to stdout with [logger] prefix
 static const char* logger_transform(const char* input_to_log) 

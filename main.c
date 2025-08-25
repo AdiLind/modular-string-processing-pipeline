@@ -170,8 +170,7 @@ static int parse_queue_size_arg(const char* argument_string)
         i++;
     }
 
-    //validate range
-    if(parse_result <= 0 || parse_result > 1000000) 
+    if(parse_result <= 0) 
     {
         return -1;
     }
@@ -188,6 +187,12 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
 {
     if (NULL == plugin_handle || NULL == plugin_name) 
     {
+        return 1;
+    }
+
+    if(strlen(plugin_name) == 0) 
+    {
+        fprintf(stderr, "Error: Plugin name is empty\n");
         return 1;
     }
 

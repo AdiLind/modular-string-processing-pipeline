@@ -18,9 +18,16 @@ static const char* typewriter_transform(const char* input_to_type)
 
 
     const char* prefix = "[typewriter] ";
-    fprintf(stdout,"%s", prefix);
-    fflush(stdout); //force immediate output
+    int prefix_len = strlen(prefix);
+    
+    // Type prefix character by character with delay
+    for(int i=0; i < prefix_len; i++) {
+        fprintf(stdout, "%c", prefix[i]);
+        fflush(stdout);
+        usleep(TYPEWRITER_CHAR_DELAY_USLEEP);
+    }
 
+    // Type input character by character with delay
     for(int i=0; i < input_len; i++) {
         fprintf(stdout, "%c", input_to_type[i]);
         fflush(stdout);
