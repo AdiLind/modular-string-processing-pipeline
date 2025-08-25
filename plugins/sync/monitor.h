@@ -8,8 +8,9 @@
 typedef struct {
     pthread_mutex_t mutex;      /* Mutex for thread safety */
     pthread_cond_t condition;   /* Condition variable */
-   int signaled;              /* Flag to remember if monitor was signaled */
-   //unsigned int count;        /* Counter for pendings signals */
+    pthread_cond_t destroy_cv;  /* Condition variable for safe destruction */
+    int signaled;              /* Flag to remember if monitor was signaled */
+    int waiting_count;         /* Counter for threads currently waiting */
 } monitor_t;
 
 /** Initializes the monitor structure.

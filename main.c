@@ -373,10 +373,8 @@ static void connect_plugins_in_pipeline_chain(plugin_handle_t* plugins_arr, int 
         int next_index = current_index + 1;
         plugins_arr[current_index].attach(plugins_arr[next_index].place_work);
     }
-    
-    // Add small delay to ensure all plugin threads are fully synchronized
-    //TODO : check if this is really needed or we can remove it - this is valid with the instructions?
-    usleep(10000); // 10ms delay to allow thread synchronization
+
+    // usleep(10000); 
 }
 
 static int read_input_and_process(plugin_handle_t* first_plugin_in_chain)

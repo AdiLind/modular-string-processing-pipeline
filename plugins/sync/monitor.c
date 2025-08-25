@@ -11,6 +11,7 @@ int monitor_init(monitor_t* monitor) {
     }
 
     monitor->signaled = 0;
+    monitor->waiting_count = 0;
 
     is_init_success = pthread_mutex_init(&monitor->mutex, NULL);
     if (is_init_success != 0) {
@@ -20,6 +21,14 @@ int monitor_init(monitor_t* monitor) {
     is_init_success = pthread_cond_init(&monitor->condition, NULL);
     if (is_init_success != 0) {
         //init failed so weclean up mutex and return error
+        pthread_mutex_destroy(&monitor->mutex);
+        return -1;
+    }
+
+    is_init_success = pthread_cond_init(&monitor->destroy_cv, NULL);
+    if (is_init_success != 0) {
+        //init failed so we clean up mutex and condition and return error
+        pthread_cond_destroy(&monitor->condition);
         pthread_mutex_destroy(&monitor->mutex);
         return -1;
     }
@@ -41,8 +50,12 @@ void monitor_destroy(monitor_t* monitor) {
     pthread_mutex_lock(&monitor->mutex);
     monitor->signaled = 1;
     pthread_cond_broadcast(&monitor->condition);
+    
+    // Wait for all waiting threads to exit properly
+    while (monitor->waiting_count > 0) {
+        pthread_cond_wait(&monitor->destroy_cv, &monitor->mutex);
+    }
     pthread_mutex_unlock(&monitor->mutex);
-    usleep(1000); // give time for threads to wake up - random value maybe we need to add more time (TODO: check on internet)
 
     int is_destroyed = pthread_mutex_destroy(&monitor->mutex);
     if(is_destroyed != 0) {
@@ -55,7 +68,14 @@ void monitor_destroy(monitor_t* monitor) {
         //the pdf says that we need to remove all the prints 
         //fprintf(stderr, "[monitor_destroy] Warning: pthread_cond_destroy failed with error %d\n", is_destroyed);
     }
+
+    is_destroyed = pthread_cond_destroy(&monitor->destroy_cv);
+    if(is_destroyed != 0) {
+        //fprintf(stderr, "[monitor_destroy] Warning: pthread_cond_destroy for destroy_cv failed with error %d\n", is_destroyed);
+    }
+    
     monitor->signaled = 0;
+    monitor->waiting_count = 0;
 
 }
 
@@ -134,14 +154,22 @@ int monitor_wait(monitor_t* monitor)
         return 0;
     }
 
+    monitor->waiting_count++;  // Increment counter before waiting
     while (0 == monitor->signaled)
     {
         //wait for the condition variable, we releases the mutex while waiting
         int wait_result = pthread_cond_wait(&monitor->condition, &monitor->mutex);
         if (wait_result != 0) 
         {
+            monitor->waiting_count--;  // Decrement on error
             return -1;
         }
+    }
+    monitor->waiting_count--;  // Decrement counter after waiting
+    
+    // If this was the last waiting thread, signal the destroyer
+    if (monitor->waiting_count == 0) {
+        pthread_cond_signal(&monitor->destroy_cv);
     }
 
     if (0 != pthread_mutex_unlock(&monitor->mutex)) {
