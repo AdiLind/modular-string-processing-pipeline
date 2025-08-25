@@ -209,7 +209,7 @@ const char* plugin_fini(void) {
         free(g_plugin_context.queue);
     }
     
-    //at the end destroy the mutex and condition variable the sync primitives
+    //at the end we destroy the mutex and condition variable the sync primitives
     pthread_cond_destroy(&g_plugin_context.ready_cond);
     pthread_mutex_destroy(&g_plugin_context.ready_mutex);
     

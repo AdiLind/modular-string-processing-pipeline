@@ -19,7 +19,7 @@ int monitor_init(monitor_t* monitor) {
 
     is_init_success = pthread_cond_init(&monitor->condition, NULL);
     if (is_init_success != 0) {
-        //init failed, clean up mutex
+        //init failed so weclean up mutex and return error
         pthread_mutex_destroy(&monitor->mutex);
         return -1;
     }
@@ -47,16 +47,16 @@ void monitor_destroy(monitor_t* monitor) {
     int is_destroyed = pthread_mutex_destroy(&monitor->mutex);
     if(is_destroyed != 0) {
         //Log error maybe mutex still locked
-        fprintf(stderr, "[monitor_destroy] Warning: pthread_mutex_destroy failed with error %d\n", is_destroyed);
+        //fprintf(stderr, "[monitor_destroy] Warning: pthread_mutex_destroy failed with error %d\n", is_destroyed);
     }
 
     is_destroyed = pthread_cond_destroy(&monitor->condition);
     if(is_destroyed != 0) {
-        
-        fprintf(stderr, "[monitor_destroy] Warning: pthread_cond_destroy failed with error %d\n", is_destroyed);
+        //the pdf says that we need to remove all the prints 
+        //fprintf(stderr, "[monitor_destroy] Warning: pthread_cond_destroy failed with error %d\n", is_destroyed);
     }
     monitor->signaled = 0;
-    //monitor->count = 0;  
+
 }
 
 void monitor_signal(monitor_t* monitor) 
@@ -69,19 +69,20 @@ void monitor_signal(monitor_t* monitor)
     // Lock the mutex before signaling
     is_locked = pthread_mutex_lock(&monitor->mutex);
 
-    if (is_locked != 0) {
-        fprintf(stderr, "[monitor_signal] Error: pthread_mutex_lock failed with error %d\n", is_locked);
+    if (is_locked != 0) 
+    {
+        
+        //fprintf(stderr, "[monitor_signal] Error: pthread_mutex_lock failed with error %d\n", is_locked);
         return;
     }
 
     monitor->signaled = 1;
-    //monitor->count++;
-    //pthread_cond_signal(&monitor->condition);
+
     pthread_cond_broadcast(&monitor->condition); //wake all waiting threads
 
     is_unlocked = pthread_mutex_unlock(&monitor->mutex);
     if (is_unlocked != 0) {
-        fprintf(stderr, "[monitor_signal] Error: pthread_mutex_unlock failed with error %d\n", is_unlocked);
+        //fprintf(stderr, "[monitor_signal] Error: pthread_mutex_unlock failed with error %d\n", is_unlocked);
     }
 }
 
@@ -95,16 +96,15 @@ void monitor_reset(monitor_t* monitor)
 
     is_locked = pthread_mutex_lock(&monitor->mutex);
     if (is_locked != 0) {
-        fprintf(stderr, "[monitor_reset] Error: pthread_mutex_lock failed with error %d\n", is_locked);
+        //fprintf(stderr, "[monitor_reset] Error: pthread_mutex_lock failed with error %d\n", is_locked);
         return;
     }
 
     monitor->signaled = 0;
-    //monitor->count = 0; 
 
     is_unlocked = pthread_mutex_unlock(&monitor->mutex);
     if (is_unlocked != 0) {
-        fprintf(stderr, "[monitor_reset] Error: pthread_mutex_unlock failed with error %d\n", is_unlocked);
+        //fprintf(stderr, "[monitor_reset] Error: pthread_mutex_unlock failed with error %d\n", is_unlocked);
     }
 }
 
@@ -117,9 +117,9 @@ int monitor_wait(monitor_t* monitor)
         return -1;
     }
 
-    //lock_result  = pthread_mutex_lock(&monitor->mutex);
-    if (pthread_mutex_lock(&monitor->mutex)  != 0) {
-        fprintf(stderr, "[monitor_wait] Error: pthread_mutex_lock failed\n");
+    int lock_result  = pthread_mutex_lock(&monitor->mutex);
+    if (lock_result  != 0) {
+        //fprintf(stderr, "[monitor_wait] Error: pthread_mutex_lock failed\n");
         return -1;
     }
 
@@ -128,7 +128,7 @@ int monitor_wait(monitor_t* monitor)
         //if already signaled - return immediately
         if (0 != pthread_mutex_unlock(&monitor->mutex)) 
         {
-            fprintf(stderr, "[monitor_wait] Error: pthread_mutex_unlock failed\n");
+           // fprintf(stderr, "[monitor_wait] Error: pthread_mutex_unlock failed\n");
             return -1;
         }
         return 0;
@@ -138,20 +138,14 @@ int monitor_wait(monitor_t* monitor)
     {
         //wait for the condition variable, we releases the mutex while waiting
         int wait_result = pthread_cond_wait(&monitor->condition, &monitor->mutex);
-        if (wait_result != 0) {
-            fprintf(stderr, "[monitor_wait] Error: pthread_cond_wait failed with error %d (%s)\n", 
-            wait_result, strerror(wait_result));           
-            //pthread_mutex_unlock(&monitor->mutex); // this line maybe not correct what if the mutex is already locked? or undefined?
+        if (wait_result != 0) 
+        {
             return -1;
         }
     }
-    
-    //after consuming the signal we need to reset signaled
-    // monitor->signaled = 0; 
-    //monitor->count--; // Decrement the count of pending signals
 
     if (0 != pthread_mutex_unlock(&monitor->mutex)) {
-        fprintf(stderr, "[monitor_wait] Error: pthread_mutex_unlock failed\n");
+        // fprintf(stderr, "[monitor_wait] Error: pthread_mutex_unlock failed\n");
         return -1;
     }
 

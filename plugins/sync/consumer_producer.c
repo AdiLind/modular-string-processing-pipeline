@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 
+// static function declaration
 static void cleanup_partial_init(consumer_producer_t* queue, int stage);
 
 
@@ -75,7 +76,6 @@ void consumer_producer_destroy(consumer_producer_t* queue) {
         return;
     }
 
-    //TODO:check if this is the right approach -  Signal all waiting threads before cleanup
     monitor_signal(&queue->not_full_monitor);
     monitor_signal(&queue->not_empty_monitor);
     monitor_signal(&queue->finished_monitor);
@@ -150,18 +150,17 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
             }
             strcpy(copy_of_item, item);
             
-            // Add item
+            //Add item
             queue->items[queue->tail] = copy_of_item;
             queue->tail = (queue->tail + 1) % queue->capacity;
             queue->count++;
             
-            //Release lock before signaling
             pthread_mutex_unlock(&queue->queue_mutex);
             
             //asignal that queue is not empty (wake up consumers)
             monitor_signal(&queue->not_empty_monitor);
             
-            return NULL; // Success
+            return NULL;
         }
         
         // Condition not met - prepare to wait
@@ -178,103 +177,28 @@ const char* consumer_producer_put(consumer_producer_t* queue, const char* item) 
 }
 
 
-
-/* 
-**old version 
-const char* consumer_producer_put(consumer_producer_t* queue, const char* item) {
-
-    if (NULL == queue || NULL == item) {
-        return "Queue or item pointer is NULL";
-    }
-
-    if(NULL == queue->items) {
-        return "Queue items array is not initialized";
-    }
-    
-    // if (queue->count >= queue->capacity) {
-    //     return "Queue is full";
-    // }
-
-    //wait until queue is full
-    pthread_mutex_lock(&queue->queue_mutex);
-    while (queue->count >= queue->capacity) 
-    {
-        // queue is full now so we make manual reset not_full monitor before waiting
-        pthread_mutex_unlock(&queue->queue_mutex);
-        monitor_reset(&queue->not_full_monitor);
-        
-        
-        //block until space to becomes available
-        if (0 != monitor_wait(&queue->not_full_monitor)) {
-            return "Failed to wait for not_full condition";
-        }
-        
-        //reacquire mutex before checking condition again
-        pthread_mutex_lock(&queue->queue_mutex);
-    }
-
-    // now we can safely add the item (we have the mutex locked and queue is not full)
-    //make a copy of the string
-    char* copy_of_item = strdup(item);
-    if (NULL == copy_of_item) {
-        pthread_mutex_unlock(&queue->queue_mutex);
-        return "Failed to copy item string";
-    }
-    
-    // add the item to the queue
-    queue->items[queue->tail] = copy_of_item;
-    queue->tail = (queue->tail + 1) % queue->capacity;
-    queue->count++;
-
-    //now we signal that queue is not empty
-    monitor_signal(&queue->not_empty_monitor);
-
-    //if the queue is not full after adding the item, we signal not_full_monitor
-    if (queue->count < queue->capacity) {
-        monitor_signal(&queue->not_full_monitor);
-    }
-
-    pthread_mutex_unlock(&queue->queue_mutex);
-    return NULL; //success 
-}
-
-*/
-
 char* consumer_producer_get(consumer_producer_t* queue) {
     if (NULL == queue) {
-        //printf("DEBUG: queue is NULL\n");
         return NULL;
     }
     
     if (NULL == queue->items) {
-        //printf("DEBUG: queue->items is NULL\n");
         return NULL;
     }
 
     
-    //printf("DEBUG: About to lock mutex for get operation\n");
-    //printf("DEBUG: queue->count = %d, queue->head = %d, queue->capacity = %d\n", queue->count, queue->head, queue->capacity);
     while (1) {
         pthread_mutex_lock(&queue->queue_mutex);
 
-        //printf("DEBUG: Locked mutex, checking condition (count > 0)\n");
-        //printf("DEBUG: queue->count = %d\n", queue->count);
         
         // Check condition while holding lock
         if (queue->count > 0) {
 
-            //printf("DEBUG: Found items, getting item at head = %d\n", queue->head);
-            //printf("DEBUG: About to access queue->items[%d]\n", queue->head);
-            //printf("DEBUG: queue->items pointer = %p\n", (void*)queue->items);  
-            //printf("DEBUG: queue->items[%d] pointer check\n", queue->head); 
             // Items available - perform operation
             char* item = queue->items[queue->head];
-            //printf("DEBUG: Successfully accessed item: %s\n", item ? item : "NULL");
             queue->items[queue->head] = NULL;
             queue->head = (queue->head + 1) % queue->capacity;
             queue->count--;
-
-            //printf("DEBUG: Updated queue state - count: %d, head: %d\n", queue->count, queue->head);
             
             // Release lock before signaling
             pthread_mutex_unlock(&queue->queue_mutex);
@@ -285,15 +209,12 @@ char* consumer_producer_get(consumer_producer_t* queue) {
             return item; // Success
         }
         
-        //printf("DEBUG: Queue is empty, preparing to wait\n");
         // Condition not met - prepare to wait
         pthread_mutex_unlock(&queue->queue_mutex);
         
         // Wait for condition to change
         monitor_reset(&queue->not_empty_monitor);
-        //printf("DEBUG: About to wait on not_empty_monitor\n");
         if (0 != monitor_wait(&queue->not_empty_monitor)) {
-            //printf("DEBUG: monitor_wait failed\n");
             return NULL; // Wait failed
         }
         
@@ -303,74 +224,22 @@ char* consumer_producer_get(consumer_producer_t* queue) {
 }
 
 
-/*
-* old version
-char* consumer_producer_get(consumer_producer_t* queue) 
-{
-    if (NULL == queue) {
-        return NULL;
-    }
-    if (NULL == queue->items) {
-        return NULL; // items array is not initialized
-    }
-
-    // wait until queue is not empty
-    pthread_mutex_lock(&queue->queue_mutex);
-    while (queue->count <= 0) {
-        // queue is empty now so we make manual reset not_empty monitor before waiting
-        pthread_mutex_unlock(&queue->queue_mutex);
-        monitor_reset(&queue->not_empty_monitor);
-        
-        //wait for an item to become available 
-        if (0 != monitor_wait(&queue->not_empty_monitor)) {
-            return NULL;
-        }
-        
-        //reacquire mutex and check condition again
-        pthread_mutex_lock(&queue->queue_mutex);
-    }
-
-    // now we can safely get the item (we have the mutex locked and queue is not empty)
-    // get the item from the queue
-    char* item = queue->items[queue->head];
-    queue->items[queue->head] = NULL;
-    queue->head = (queue->head + 1) % queue->capacity;
-    queue->count--;
-
-    monitor_signal(&queue->not_full_monitor);
-    // if the queue is not empty after getting the item, we signal not_empty_monitor
-    if (queue->count > 0) {
-        monitor_signal(&queue->not_empty_monitor);
-    }
-
-    pthread_mutex_unlock(&queue->queue_mutex);
-    return item; //return the item (the caller responsible for freeing it - we made a copy) #TODO: check if this is the correct approach
-
-}
-
-*/
-
 void consumer_producer_signal_finished(consumer_producer_t* queue) {
-    //printf("DEBUG: signal_finished called\n");
     if (NULL == queue) {
-        //printf("DEBUG: queue is NULL!\n");
+
         return;
     }
     monitor_signal(&queue->finished_monitor);
 }
 
 int consumer_producer_wait_finished(consumer_producer_t* queue) {
-    //printf("DEBUG: wait_finished called\n");
     if (NULL == queue) {
-        //printf("DEBUG: queue is NULL!\n");
         return -1;
     }
-    //printf("DEBUG: calling monitor_wait\n");
+
     if (0 != monitor_wait(&queue->finished_monitor)) {
-        //printf("DEBUG: monitor_wait failed\n");
         return -1;
     }
-    //printf("DEBUG: monitor_wait succeeded\n");
     return 0;
 }
 

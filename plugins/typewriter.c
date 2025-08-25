@@ -1,4 +1,5 @@
-//This typewriter plugin simulates typing by outputting one character at a time with a delay of 100ms
+//This typewriter plugin simulates typing by outputting one character at a time 
+// with a delay of 100ms (configurable via TYPEWRITER_CHAR_DELAY_USLEEP).
 
 #include "plugin_common.h"
 #include <stdio.h>
@@ -6,7 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define TYPEWRITER_CHAR_DELAY_USLEEP 100000 // 100000 => 100ms delay
+#define TYPEWRITER_CHAR_DELAY_USLEEP 100000
 
 static const char* typewriter_transform(const char* input_to_type) 
 {
@@ -15,7 +16,7 @@ static const char* typewriter_transform(const char* input_to_type)
     }
     int input_len = strlen(input_to_type);
 
-    // adding prefix [typewriter]
+
     const char* prefix = "[typewriter] ";
     fprintf(stdout,"%s", prefix);
     fflush(stdout); //force immediate output
@@ -33,13 +34,12 @@ static const char* typewriter_transform(const char* input_to_type)
     //move the input to the next plugin in the chain if exists
     size_t len = strlen(input_to_type);
     char* copy_of_input = (char*)malloc(len + 1);
+    if (NULL == copy_of_input) { return NULL; }
+
     if (copy_of_input) {
         strcpy(copy_of_input, input_to_type);
     }
-    if (NULL == copy_of_input)
-    {
-        return NULL; //TODO: this is necessary ? should we return NULL or error message? how this error could occur?
-    }
+
     return copy_of_input;
 }
 
