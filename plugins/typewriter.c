@@ -1,6 +1,7 @@
 //This typewriter plugin simulates typing by outputting one character at a time 
 // with a delay of 100ms (configurable via TYPEWRITER_CHAR_DELAY_USLEEP).
 
+#define _GNU_SOURCE
 #include "plugin_common.h"
 #include <stdio.h>
 #include <stdlib.h>

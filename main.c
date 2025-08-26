@@ -192,7 +192,7 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
 
     if(strlen(plugin_name) == 0) 
     {
-        fprintf(stderr, "Error: Plugin name is empty\n");
+        fprintf(stderr, "ERROR: Plugin name is empty\n");
         return 1;
     }
 
@@ -225,7 +225,8 @@ static int load_single_plugin_with_dlmopen(plugin_handle_t* plugin_handle, const
 
     // we use dlmopen to load each instance into a separate namespace
     // this func allows us to use multiple instances of the same plugin to have separate global state
-    plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW); // TODO: check if we need RTLD_NOW | RTLD_LOCAL instead
+    // OLD: plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW);
+    plugin_handle->dynamic_library_handle = dlmopen(LM_ID_NEWLM, so_file_path, RTLD_NOW | RTLD_LOCAL);
     if (NULL == plugin_handle->dynamic_library_handle)
     {
         fprintf(stderr, "fail occur while loading plugin %s from %s: %s\n", plugin_name, so_file_path, dlerror());
