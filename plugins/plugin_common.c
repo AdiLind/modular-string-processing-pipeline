@@ -45,14 +45,17 @@ void* plugin_consumer_thread(void* arg)
 
     //signal that the thread is ready
     // this is used to notify the main thread that the consumer thread is ready to process items
+
     pthread_mutex_lock(&plugin_context->ready_mutex);
+
     plugin_context->thread_ready = 1;
     pthread_cond_signal(&plugin_context->ready_cond);
+
     pthread_mutex_unlock(&plugin_context->ready_mutex);
 
     while(!plugin_context->finished) 
     {
-        // retrieve next item from queue, blocks if empty
+        //get next item from queue, blocks if empty
         char* input_string = consumer_producer_get(plugin_context->queue);
 
         if (NULL == input_string) {
@@ -121,7 +124,9 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
     
     //init queue
     g_plugin_context.queue = (consumer_producer_t*)malloc(sizeof(consumer_producer_t));
-    if (!g_plugin_context.queue) {
+    if (!g_plugin_context.queue) 
+    {
+
         pthread_cond_destroy(&g_plugin_context.ready_cond);
         pthread_mutex_destroy(&g_plugin_context.ready_mutex);
         return "Failed to allocate queue";
@@ -129,6 +134,7 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 
     memset(g_plugin_context.queue, 0, sizeof(consumer_producer_t));
     const char* error = consumer_producer_init(g_plugin_context.queue, queue_size);
+
     if (error) {
         free(g_plugin_context.queue);
         pthread_cond_destroy(&g_plugin_context.ready_cond);
@@ -137,12 +143,13 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
     }
     
     //consumer thread
-    if (pthread_create(&g_plugin_context.consumer_thread, NULL, 
-                       plugin_consumer_thread, &g_plugin_context) != 0) {
+    if (pthread_create(&g_plugin_context.consumer_thread, NULL, plugin_consumer_thread, &g_plugin_context) != 0) 
+    {
         consumer_producer_destroy(g_plugin_context.queue);
         free(g_plugin_context.queue);
         pthread_cond_destroy(&g_plugin_context.ready_cond);
         pthread_mutex_destroy(&g_plugin_context.ready_mutex);
+
         return "Failed to create thread";
     }
 
@@ -150,12 +157,14 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 
     //waiting until the consumer thread signals that it is ready
     pthread_mutex_lock(&g_plugin_context.ready_mutex);
-    while (!g_plugin_context.thread_ready) {
+
+    while (!g_plugin_context.thread_ready) 
+    {
         pthread_cond_wait(&g_plugin_context.ready_cond, &g_plugin_context.ready_mutex);
     }
     pthread_mutex_unlock(&g_plugin_context.ready_mutex);
-
     g_plugin_context.initialized = 1;
+
     return NULL;
 }
 
@@ -168,9 +177,8 @@ const char* common_plugin_init(const char* (*process_function)(const char*),
 
 PLUGIN_EXPORT
 const char* plugin_place_work(const char* str) {
-    if (!g_plugin_context.initialized || !str) {
-        return "Plugin not ready";
-    }
+    if (!g_plugin_context.initialized || !str) { return "Plugin not ready"; }
+    
     return consumer_producer_put(g_plugin_context.queue, str);
 }
 
@@ -214,10 +222,12 @@ const char* plugin_fini(void) {
     pthread_mutex_destroy(&g_plugin_context.ready_mutex);
     
     memset(&g_plugin_context, 0, sizeof(plugin_context_t));
+
     return NULL;
 }
 
 PLUGIN_EXPORT
-const char* plugin_get_name(void) {
+const char* plugin_get_name(void) 
+{
     return g_plugin_context.name ? g_plugin_context.name : "Unknown Plugin";
 }

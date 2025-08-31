@@ -10,6 +10,7 @@ FAILED=0
 TOTAL=0
 
 
+
 # test helper functions
 run_test() {
     TOTAL=$((TOTAL + 1))
@@ -27,20 +28,23 @@ test_fail() {
 }
 
 echo "Starting To Test MY Modular Pipeline System"
-echo "=========================================="
+echo "==========================================="
 
 # Build first
 echo "Building project..."
 ./build.sh
 
+
 ## check if build succeeded
 # Test 1: checking if analyzer exist (the main core of the system) 
-run_test "Analyzer executable exists - make sure build succeeded"
+run_test "Analyzer executable exists - make sure build suceeded"
 if [[ -x "$ANALYZER" ]]; then
     test_pass
 else
     test_fail "analyzer not found"
 fi
+
+
 
 # Test 2: Checking if all the plugins exist
 run_test "Plugin libraries exist"
@@ -74,11 +78,14 @@ else
     test_pass
 fi
 
+
 # Test 5: queue size - 0 negative or lagre - should fail
 run_test "Invalid queue size (0, neg and large) - should reject them all"
 if timeout 3s "$ANALYZER" 0 logger >/dev/null 2>&1 && \
+
    timeout 3s "$ANALYZER" -5 logger >/dev/null 2>&1 && \
-   timeout 3s "$ANALYZER" 2000000 logger >/dev/null 2>&1; then
+
+   timeout 6s "$ANALYZER" 2000000 logger >/dev/null 2>&1; then
     test_fail "invalid queue sizes (one of them - zero, negative, or large number)"
 else
     test_pass "All invalid queue sizes properly rejected"
@@ -87,6 +94,7 @@ fi
 
 
 # Test 6: if we run on plugin which does not exist - should fail
+
 run_test "Non-existent plugin rejection"
 if timeout 3s "$ANALYZER" 10 badplugin >/dev/null 2>&1; then
     test_fail "should reject bad plugin"
@@ -94,11 +102,12 @@ else
     test_pass
 fi
 
-## check plugin behavior ###
+#### check each plugin behavior ###
 
 # Test 7: logger
 run_test " logger plugin"
 result=$(echo -e "hello\n<END>" | timeout 5s "$ANALYZER" 10 logger 2>/dev/null | grep "\[logger\]" || true)
+
 if [[ "$result" == "[logger] hello" ]]; then
 
     test_pass
@@ -109,6 +118,7 @@ fi
 # Test 8: Uppercaser 
 run_test "Uppercaser "
 result=$(echo -e "test\n<END>" | timeout 5s "$ANALYZER" 10 uppercaser logger 2>/dev/null | grep "\[logger\]" || true)
+
 if [[ "$result" == "[logger] TEST" ]]; then
     test_pass
 else
@@ -117,6 +127,7 @@ fi
 
 # Test 9: Rotator 
 run_test "Rotator "
+
 result=$(echo -e "abc\n<END>" | timeout 5s "$ANALYZER" 10 rotator logger 2>/dev/null | grep "\[logger\]" || true)
 if [[ "$result" == "[logger] cab" ]]; then
     test_pass
@@ -139,6 +150,7 @@ fi
 run_test "Expander "
 
 result=$(echo -e "hi\n<END>" | timeout 5s "$ANALYZER" 10 expander logger 2>/dev/null | grep "\[logger\]" || true)
+
 if [[ "$result" == "[logger] h i" ]]; then
 
     test_pass
@@ -262,7 +274,7 @@ echo "Total:  $TOTAL"
 
 
 if [[ $FAILED -eq 0 ]]; then
-    echo "You are the best!! All tests passed! you can go to the beach now! 🎉"
+    echo "You are the best!! All tests passed! now I can go to sleep :) 🎉"
     exit 0
 else  
     pass_rate=$((PASSED * 100 / TOTAL))
